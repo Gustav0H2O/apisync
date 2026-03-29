@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "rewrites": [
+    { "source": "/api/proxy", "destination": "/api/proxy.js" },
+    { "source": "/api/auth/token", "destination": "/api/auth/token.js" },
+    { "source": "/api/sync/pull", "destination": "/api/sync/pull.js" },
+    { "source": "/api/sync/push", "destination": "/api/sync/push.js" }
+  ]
+}
