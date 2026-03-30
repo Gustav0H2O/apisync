@@ -144,7 +144,7 @@ export default async function handler(req, res) {
         }
 
         console.log('Cerrando BD y devolviendo');
-        connection.end();
+        await connection.end();
 
         return res.status(200).json({
             clients:  remoteClients,
@@ -153,7 +153,7 @@ export default async function handler(req, res) {
 
     } catch (e) {
         console.error('❌ [Sync Error]:', e);
-        if (connection) connection.end();
+        if (connection) await connection.end();
         return res.status(500).json({ error: String(e.message || e) });
     }
 }
