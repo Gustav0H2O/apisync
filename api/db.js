@@ -35,10 +35,10 @@ export default async function handler(req, res) {
     try {
         connection = await getConnection();
         const [rows] = await connection.execute(query, params || []);
-        await connection.destroy(); // IMPORTANTÍSIMO AQUÍ
+        await connection.end(); // IMPORTANTÍSIMO AQUÍ
         return res.status(200).json({ rows });
     } catch (e) {
-        if (connection) await connection.destroy();
+        if (connection) await connection.end();
         console.error('❌ [API] Proxy Error:', e.message);
         return res.status(500).json({ error: e.message });
     }

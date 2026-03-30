@@ -26,7 +26,7 @@ export default async function handler(req, res) {
         );
 
         if (!rows.length) {
-            await connection.destroy();
+            await connection.end();
             return res.status(401).json({ error: 'Licencia inválida o no activa' });
         }
 
@@ -34,7 +34,7 @@ export default async function handler(req, res) {
 
         if (lic.tipo === 'saas' && lic.fecha_vencimiento) {
             if (new Date(lic.fecha_vencimiento) < new Date()) {
-                await connection.destroy();
+                await connection.end();
                 return res.status(401).json({ error: 'Licencia vencida' });
             }
         }
@@ -47,7 +47,7 @@ export default async function handler(req, res) {
             [device_id, license_key]
         );
 
-        await connection.destroy(); // Listo con MySQL
+        await connection.end(); // Listo con MySQL
 
         const token = jwt.sign(
             { licenseKey: license_key, deviceId: device_id, email: lic.email },
@@ -57,7 +57,7 @@ export default async function handler(req, res) {
 
         return res.status(200).json({ token, expiresIn: 3600 });
     } catch (e) {
-        if (connection) await connection.destroy();
+        if (connection) await connection.end();
         return res.status(500).json({ error: e.message });
     }
 }
