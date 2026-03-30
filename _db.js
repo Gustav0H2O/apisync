@@ -1,7 +1,7 @@
 import mysql from 'mysql2/promise';
 
 export async function getConnection() {
-  return await mysql.createConnection({
+  const connection = await mysql.createConnection({
     host: process.env.DB_HOST,
     port: process.env.DB_PORT || 3306,
     user: process.env.DB_USER,
@@ -11,6 +11,14 @@ export async function getConnection() {
       rejectUnauthorized: false
     }
   });
+
+  // MAGIA PARA LIMITES SEVEROS (filess.io max=5):
+  // Si un contenedor de Vercel muere o se congela antes de connection.end(),
+  // le ordenamos a MySQL que mate brutalmente esta conexión si está inactiva por 2 segundos.
+  await connection.query('SET SESSION wait_timeout = 2');
+  await connection.query('SET SESSION interactive_timeout = 2');
+
+  return connection;
 }
 
 export async function queryDB(sql, params) {
