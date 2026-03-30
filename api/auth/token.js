@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import { queryDB } from '../_db.js';
+import { getConnection } from '../_db.js';
 
 const JWT_SECRET = process.env.JWT_SECRET;
 const TOKEN_EXPIRY = '1h';
@@ -12,8 +12,11 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Faltan parámetros' });
     }
 
+    let connection;
     try {
-        const rows = await queryDB(
+        connection = await getConnection();
+
+        const [rows] = await connection.execute(
             `SELECT l.id, l.tipo, c.email, ds.fecha_vencimiento
        FROM licencias l
        JOIN clientes c ON l.cliente_id = c.id
@@ -22,23 +25,29 @@ export default async function handler(req, res) {
             [license_key]
         );
 
-        if (!rows.length) return res.status(401).json({ error: 'Licencia inválida o no activa' });
+        if (!rows.length) {
+            await connection.destroy();
+            return res.status(401).json({ error: 'Licencia inválida o no activa' });
+        }
 
         const lic = rows[0];
 
         if (lic.tipo === 'saas' && lic.fecha_vencimiento) {
             if (new Date(lic.fecha_vencimiento) < new Date()) {
+                await connection.destroy();
                 return res.status(401).json({ error: 'Licencia vencida' });
             }
         }
 
         // Registrar dispositivo
-        await queryDB(
+        await connection.execute(
             `INSERT INTO devices (device_id, license_key, last_seen)
        VALUES (?, ?, NOW())
        ON DUPLICATE KEY UPDATE last_seen = NOW()`,
             [device_id, license_key]
         );
+
+        await connection.destroy(); // Listo con MySQL
 
         const token = jwt.sign(
             { licenseKey: license_key, deviceId: device_id, email: lic.email },
@@ -48,6 +57,7 @@ export default async function handler(req, res) {
 
         return res.status(200).json({ token, expiresIn: 3600 });
     } catch (e) {
+        if (connection) await connection.destroy();
         return res.status(500).json({ error: e.message });
     }
 }

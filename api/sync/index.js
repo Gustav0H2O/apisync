@@ -1,5 +1,5 @@
-import { getConnection } from './_db.js';
-import { verifyToken } from './_helpers.js';
+import { getConnection } from '../_db.js';
+import { verifyToken } from '../_helpers.js';
 
 /**
  * POST /api/sync

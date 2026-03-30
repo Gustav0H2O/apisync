@@ -1,4 +1,5 @@
-import { verifyToken, queryDB } from '../_helpers.js';
+import { getConnection } from '../_db.js';
+import { verifyToken } from '../_helpers.js';
 
 export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).end();
@@ -11,10 +12,13 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Datos inválidos' });
     }
 
+    let connection;
     try {
+        connection = await getConnection();
+        
         for (const item of data) {
             if (entity === 'clients') {
-                await queryDB(
+                await connection.execute(
                     `INSERT INTO sync_clients (uuid, account_email, name, phone, rif, address, deleted_at, version, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON DUPLICATE KEY UPDATE 
@@ -29,7 +33,7 @@ export default async function handler(req, res) {
                 );
             } else if (entity === 'invoices') {
                 // Upsert Invoice
-                await queryDB(
+                await connection.execute(
                     `INSERT INTO sync_invoices (uuid, account_email, number, client_uuid, client_name, date, type, document_type, total, deleted_at, version, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON DUPLICATE KEY UPDATE 
@@ -43,7 +47,7 @@ export default async function handler(req, res) {
                 // Upsert Items if present
                 if (item.items && Array.isArray(item.items)) {
                     for (const it of item.items) {
-                        await queryDB(
+                        await connection.execute(
                             `INSERT INTO sync_invoice_items (uuid, invoice_uuid, description, quantity, unit_price, total_price, deleted_at, version, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON DUPLICATE KEY UPDATE 
@@ -62,13 +66,15 @@ export default async function handler(req, res) {
         }
 
         // Log sync
-        await queryDB(
+        await connection.execute(
             `INSERT INTO sync_log (device_id, action, entity_type, records_count) VALUES (?, 'PUSH', ?, ?)`,
             [user.deviceId, entity, data.length]
         );
 
+        await connection.destroy(); // Cerrar a la fuerza antes del response
         return res.status(200).json({ success: true });
     } catch (e) {
+        if (connection) await connection.destroy();
         return res.status(500).json({ error: e.message });
     }
 }
