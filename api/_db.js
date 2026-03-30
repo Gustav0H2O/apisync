@@ -15,8 +15,8 @@ export async function getConnection() {
   // MAGIA PARA LIMITES SEVEROS (filess.io max=5):
   // Si un contenedor de Vercel muere o se congela antes de connection.end(),
   // le ordenamos a MySQL que mate brutalmente esta conexión si está inactiva por 2 segundos.
-  await connection.query('SET SESSION wait_timeout = 2');
-  await connection.query('SET SESSION interactive_timeout = 2');
+  
+  
 
   return connection;
 }
