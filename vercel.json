@@ -1,10 +1,1 @@
-{
-  "version": 2,
-  "rewrites": [
-    { "source": "/api/proxy", "destination": "/api/proxy.js" },
-    { "source": "/api/auth/token", "destination": "/api/auth/token.js" },
-    { "source": "/api/sync", "destination": "/api/sync/index.js" },
-    { "source": "/api/sync/pull", "destination": "/api/sync/pull.js" },
-    { "source": "/api/sync/push", "destination": "/api/sync/push.js" }
-  ]
-}
+{"version":2,"rewrites":[{"source":"/api/proxy","destination":"/api/proxy.js"},{"source":"/api/auth/token","destination":"/api/auth/token.js"},{"source":"/api/sync","destination":"/api/sync.js"},{"source":"/api/sync/pull","destination":"/api/sync/pull.js"},{"source":"/api/sync/push","destination":"/api/sync/push.js"}]}
