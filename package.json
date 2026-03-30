@@ -2,7 +2,7 @@
   "name": "factuflow-api",
   "version": "1.0.0",
   "description": "Backend para sincronización de FactuFlow",
-  "main": "api/auth/token.js",
+  "type": "module",
   "dependencies": {
     "mysql2": "^3.9.2",
     "jsonwebtoken": "^9.0.2",
