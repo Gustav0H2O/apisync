@@ -32,7 +32,7 @@ export async function queryDB(sql, params) {
     throw error;
   } finally {
     if (connection) {
-      await connection.end();
+      await connection.destroy();
     }
   }
 }

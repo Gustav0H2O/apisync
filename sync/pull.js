@@ -38,10 +38,10 @@ export default async function handler(req, res) {
             [user.deviceId, clients.length + invoices.length]
         );
 
-        await connection.end(); // Cerrar conexión
+        await connection.destroy(); // Cerrar conexión
         return res.status(200).json({ clients, invoices });
     } catch (e) {
-        if (connection) await connection.end();
+        if (connection) await connection.destroy();
         return res.status(500).json({ error: e.message });
     }
 }

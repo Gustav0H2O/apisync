@@ -71,10 +71,10 @@ export default async function handler(req, res) {
             [user.deviceId, entity, data.length]
         );
 
-        await connection.end(); // Cerrar antes del response
+        await connection.destroy(); // Cerrar a la fuerza antes del response
         return res.status(200).json({ success: true });
     } catch (e) {
-        if (connection) await connection.end();
+        if (connection) await connection.destroy();
         return res.status(500).json({ error: e.message });
     }
 }
