@@ -1,5 +1,5 @@
-import { getConnection } from '../_db.js';
-import { verifyToken } from '../_helpers.js';
+import { getConnection } from './_db.js';
+import { verifyToken } from './_helpers.js';
 
 export default async function handler(req, res) {
     console.log(`🚀 [API] ${req.method} request received`);
