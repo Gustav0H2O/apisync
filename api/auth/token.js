@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import { queryDB } from './_db.js';
+import { queryDB } from '../_db.js';
 
 const JWT_SECRET = process.env.JWT_SECRET;
 const TOKEN_EXPIRY = '1h';
