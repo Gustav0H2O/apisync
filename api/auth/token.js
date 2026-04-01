@@ -33,7 +33,7 @@ async function getLicensePolicy(licenseKey) {
 export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).end();
 
-    const { license_key, device_id } = req.body;
+    const { license_key, device_id, name } = req.body;
     if (!license_key || !device_id) {
         return res.status(400).json({ error: 'Faltan parámetros' });
     }
@@ -100,9 +100,10 @@ export default async function handler(req, res) {
             }
 
             await queryDB(
-                `INSERT INTO devices (device_id, license_key, last_seen, revoked)
-                 VALUES (?, ?, NOW(), 0)`,
-                [device_id, license_key]
+                `INSERT INTO devices (device_id, license_key, name, last_seen, revoked)
+                 VALUES (?, ?, ?, NOW(), 0)
+                 ON DUPLICATE KEY UPDATE name = IF(name IS NULL OR name = '', VALUES(name), name), last_seen = NOW()`,
+                [device_id, license_key, name || 'Sin nombre']
             );
         }
 
