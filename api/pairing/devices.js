@@ -8,10 +8,10 @@ export default async function handler(req, res) {
 
   try {
     const rows = await queryDB(
-      `SELECT device_id, last_seen, revoked
+      `SELECT device_id, name, last_seen, COALESCE(paired_at, last_seen) AS paired_at, revoked
        FROM devices
        WHERE license_key = ?
-       ORDER BY revoked ASC, last_seen DESC`,
+       ORDER BY revoked ASC, paired_at ASC`,
       [user.licenseKey]
     );
 
