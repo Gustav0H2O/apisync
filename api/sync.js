@@ -15,7 +15,7 @@ import { verifyToken, isDeviceRevoked } from './_helpers.js';
 export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).end();
 
-    const user = await verifyToken(req);
+    const user = verifyToken(req);
     if (!user) return res.status(401).json({ error: 'No autorizado' });
     
     // VERIFICAR ESTADO DEL DISPOSITIVO
@@ -24,12 +24,40 @@ export default async function handler(req, res) {
     }
 
     const { push = {}, last_sync } = req.body;
-    const { clients = [], invoices = [] } = push;
+    const { clients = [], invoices = [], profile = null } = push;
 
     let connection;
     try {
         // ─── ABRIR UNA SOLA CONEXIÓN ─────────────────────────────────────
         connection = await getConnection();
+
+        // ─── FASE 0: PUSH PROFILE ────────────────────────────────────────
+        if (profile) {
+            await connection.execute(
+                `UPDATE clientes SET 
+                    business_name = ?,
+                    slogan = ?,
+                    rif = ?,
+                    address = ?,
+                    user_name = ?,
+                    user_phone = ?,
+                    accent_color = ?,
+                    header_color = ?,
+                    updated_at = NOW()
+                 WHERE email = ?`,
+                [
+                    profile.business_name,
+                    profile.slogan,
+                    profile.rif,
+                    profile.address,
+                    profile.user_name,
+                    profile.user_phone,
+                    profile.accent_color,
+                    profile.header_color,
+                    user.email
+                ]
+            );
+        }
 
         // ─── FASE 1: PUSH CLIENTES ────────────────────────────────────────
         for (const item of clients) {
@@ -101,6 +129,13 @@ export default async function handler(req, res) {
             inv.items = items;
         }
 
+        // PULL PROFILE
+        const [profileRows] = await connection.execute(
+            `SELECT business_name, slogan, rif, address, user_name, user_phone, accent_color, header_color, updated_at 
+             FROM clientes WHERE email = ? LIMIT 1`,
+            [user.email]
+        );
+
         // ─── LOG ──────────────────────────────────────────────────────────
         await connection.execute(
             `INSERT INTO sync_log (device_id, action, entity_type, records_count) 
@@ -114,6 +149,7 @@ export default async function handler(req, res) {
         return res.status(200).json({
             clients:  remoteClients,
             invoices: remoteInvoices,
+            profile:  profileRows[0] || null,
         });
 
     } catch (e) {
