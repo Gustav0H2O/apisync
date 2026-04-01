@@ -7,9 +7,12 @@ export default async function handler(req, res) {
 
     const { query, params, isActivation } = req.body;
     
+    const authHeader = req.headers.authorization;
+    const isMaster = authHeader === `Bearer ${process.env.JWT_SECRET}`;
+
     // Si NO es una consulta de activación (como SELECT licencias), validamos el token
-    if (!isActivation) {
-        const decoded = await verifyToken(req);
+    if (!isActivation && !isMaster) {
+        const decoded = verifyToken(req);
         if (!decoded) {
             return res.status(401).json({ error: 'No autorizado o token inválido' });
         }
@@ -17,12 +20,12 @@ export default async function handler(req, res) {
         // VERIFICAR ESTADO DEL DISPOSITIVO
         if (await isDeviceRevoked(decoded)) {
             return res.status(401).json({ 
-              error: 'DEVICE_REVOKED', 
-              message: 'Este dispositivo ha sido desvinculado por el administrador' 
+                error: 'DEVICE_REVOKED', 
+                message: 'Este dispositivo ha sido desvinculado por el administrador' 
             });
         }
-    } else {
-        // SEGURIDAD: Solo permitimos consultas específicas de activación
+    } else if (isActivation && !isMaster) {
+        // SEGURIDAD: Solo permitimos consultas específicas de activación si NO es maestro
         const upperQuery = query.toUpperCase();
         const isSelect = upperQuery.includes('SELECT');
         const isUpdate = upperQuery.includes('UPDATE');
@@ -38,6 +41,8 @@ export default async function handler(req, res) {
             return res.status(403).json({ error: 'Consulta de activación no permitida' });
         }
     }
+    // Si isMaster es true, se salta todas las validaciones y ejecuta la query
+
 
     let connection;
     try {
