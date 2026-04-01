@@ -5,7 +5,7 @@ const DEFAULT_MAX_DEVICES = 2;
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).end();
 
-  const user = verifyToken(req);
+  const user = await verifyToken(req);
   if (!user) return res.status(401).json({ error: 'No autorizado' });
 
   try {

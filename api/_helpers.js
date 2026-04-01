@@ -3,7 +3,7 @@ import { queryDB } from './_db.js';
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
-export function verifyToken(req) {
+export async function verifyToken(req) {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return null;
@@ -11,7 +11,19 @@ export function verifyToken(req) {
 
     const token = authHeader.split(' ')[1];
     try {
-        return jwt.verify(token, JWT_SECRET);
+        const decoded = jwt.verify(token, JWT_SECRET);
+        
+        // Verificación de seguridad en tiempo real contra la BD
+        const rows = await queryDB(
+            `SELECT revoked FROM devices WHERE device_id = ? AND license_key = ? LIMIT 1`,
+            [decoded.deviceId, decoded.licenseKey]
+        );
+
+        if (!rows.length || rows[0].revoked === 1) {
+            return null; // Dispositivo revocado o no encontrado
+        }
+
+        return decoded;
     } catch (err) {
         return null;
     }
