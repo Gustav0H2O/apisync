@@ -17,6 +17,7 @@ export default async function handler(req, res) {
   }
 
   try {
+    console.log(`🗑️ [Unlink] Attempting to unlink for License: ${license_key}, Email: ${email}, Target: ${target_device_id}`);
     const ownerRows = await queryDB(
       `SELECT c.email
        FROM licencias l
@@ -26,10 +27,14 @@ export default async function handler(req, res) {
       [license_key]
     );
     if (!ownerRows.length) {
+      console.warn(`❌ [Unlink] License not found: ${license_key}`);
       return res.status(404).json({ error: 'Licencia no encontrada' });
     }
     const ownerEmail = String(ownerRows[0].email || '').trim().toLowerCase();
-    if (ownerEmail !== String(email).trim().toLowerCase()) {
+    const inputEmail = String(email).trim().toLowerCase();
+    
+    if (ownerEmail !== inputEmail) {
+      console.warn(`❌ [Unlink] Email mismatch. Owner: ${ownerEmail}, Input: ${inputEmail}`);
       return res.status(403).json({ error: 'Correo no coincide con la licencia' });
     }
 
