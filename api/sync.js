@@ -1,5 +1,5 @@
 import { getConnection } from './_db.js';
-import { verifyToken } from './_helpers.js';
+import { verifyToken, isDeviceRevoked } from './_helpers.js';
 
 /**
  * POST /api/sync
@@ -17,6 +17,11 @@ export default async function handler(req, res) {
 
     const user = verifyToken(req);
     if (!user) return res.status(401).json({ error: 'No autorizado' });
+    
+    // VERIFICAR ESTADO DEL DISPOSITIVO
+    if (await isDeviceRevoked(user)) {
+        return res.status(401).json({ error: 'DEVICE_REVOKED', message: 'Este dispositivo ha sido desvinculado' });
+    }
 
     const { push = {}, last_sync } = req.body;
     const { clients = [], invoices = [] } = push;

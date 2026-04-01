@@ -1,5 +1,5 @@
 import { getConnection } from './_db.js';
-import { verifyToken } from './_helpers.js';
+import { verifyToken, isDeviceRevoked } from './_helpers.js';
 
 export default async function handler(req, res) {
     console.log(`🚀 [API] ${req.method} request received`);
@@ -12,6 +12,14 @@ export default async function handler(req, res) {
         const decoded = verifyToken(req);
         if (!decoded) {
             return res.status(401).json({ error: 'No autorizado o token inválido' });
+        }
+        
+        // VERIFICAR ESTADO DEL DISPOSITIVO
+        if (await isDeviceRevoked(decoded)) {
+            return res.status(401).json({ 
+              error: 'DEVICE_REVOKED', 
+              message: 'Este dispositivo ha sido desvinculado por el administrador' 
+            });
         }
     } else {
         // SEGURIDAD: Solo permitimos consultas específicas de activación

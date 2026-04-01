@@ -68,8 +68,14 @@ export default async function handler(req, res) {
 
         if (knownDeviceRows.length) {
             const known = knownDeviceRows[0];
+            if (known.revoked === 1) {
+                return res.status(401).json({ 
+                    error: 'DEVICE_REVOKED', 
+                    message: 'Este dispositivo ha sido desvinculado' 
+                });
+            }
             await queryDB(
-                `UPDATE devices SET revoked = 0, last_seen = NOW() WHERE device_id = ? AND license_key = ?`,
+                `UPDATE devices SET last_seen = NOW() WHERE device_id = ? AND license_key = ?`,
                 [known.device_id, license_key]
             );
         } else {
