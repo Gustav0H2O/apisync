@@ -100,8 +100,8 @@ export default async function handler(req, res) {
             }
 
             await queryDB(
-                `INSERT INTO devices (device_id, license_key, name, last_seen, revoked)
-                 VALUES (?, ?, ?, NOW(), 0)
+                `INSERT INTO devices (device_id, license_key, name, last_seen, paired_at, revoked)
+                 VALUES (?, ?, ?, NOW(), NOW(), 0)
                  ON DUPLICATE KEY UPDATE name = IF(name IS NULL OR name = '', VALUES(name), name), last_seen = NOW()`,
                 [device_id, license_key, name || 'Sin nombre']
             );
