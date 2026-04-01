@@ -15,7 +15,7 @@ import { verifyToken, isDeviceRevoked } from './_helpers.js';
 export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).end();
 
-    const user = verifyToken(req);
+    const user = await verifyToken(req);
     if (!user) return res.status(401).json({ error: 'No autorizado' });
     
     // VERIFICAR ESTADO DEL DISPOSITIVO

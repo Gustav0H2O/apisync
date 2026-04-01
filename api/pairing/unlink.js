@@ -5,7 +5,7 @@ const PAIR_COOLDOWN_HOURS = 48;
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
 
-  const user = verifyToken(req);
+  const user = await verifyToken(req);
   if (!user) return res.status(401).json({ error: 'No autorizado' });
 
   const { license_key, email, target_device_id } = req.body || {};
