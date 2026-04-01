@@ -3,14 +3,26 @@ import { verifyToken, isDeviceRevoked } from './_helpers.js';
 
 /**
  * POST /api/sync
- * Cuerpo: { push: { clients: [...], invoices: [...] }, last_sync: "ISO_STRING" }
- * Respuesta: { clients: [...], invoices: [...] }
+ * Cuerpo: { 
+ *   push: { 
+ *     clients: [...], 
+ *     invoices: [...],
+ *     profile: { ... }
+ *   }, 
+ *   last_sync: "ISO_STRING" 
+ * }
+ * Respuesta: { 
+ *   clients: [...], 
+ *   invoices: [...],
+ *   profile: { ... }
+ * }
  *
  * TODO en UNA SOLA CONEXIÓN de base de datos:
  *  1. Hace PUSH de clientes
  *  2. Hace PUSH de facturas + ítems
- *  3. Hace PULL de todos los datos del usuario
- *  4. Cierra la conexión
+ *  3. Hace PUSH del perfil de negocio (si se proporciona)
+ *  4. Hace PULL de todos los datos del usuario (incluyendo perfil)
+ *  5. Cierra la conexión
  */
 export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).end();
@@ -43,6 +55,7 @@ export default async function handler(req, res) {
                     user_phone = ?,
                     accent_color = ?,
                     header_color = ?,
+                    version = ?, -- Añadido para compatibilidad
                     updated_at = NOW()
                  WHERE email = ?`,
                 [
@@ -54,6 +67,7 @@ export default async function handler(req, res) {
                     profile.user_phone,
                     profile.accent_color,
                     profile.header_color,
+                    profile.version,
                     user.email
                 ]
             );
@@ -131,7 +145,7 @@ export default async function handler(req, res) {
 
         // PULL PROFILE
         const [profileRows] = await connection.execute(
-            `SELECT business_name, slogan, rif, address, user_name, user_phone, accent_color, header_color, updated_at 
+            `SELECT business_name, slogan, rif, address, user_name, user_phone, accent_color, header_color, version, updated_at 
              FROM clientes WHERE email = ? LIMIT 1`,
             [user.email]
         );
