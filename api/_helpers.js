@@ -3,7 +3,7 @@ import { queryDB } from './_db.js';
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
-export async function verifyToken(req) {
+export function verifyToken(req) {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return null;
@@ -11,19 +11,7 @@ export async function verifyToken(req) {
 
     const token = authHeader.split(' ')[1];
     try {
-        const decoded = jwt.verify(token, JWT_SECRET);
-        
-        // Verificación de seguridad en tiempo real contra la BD
-        const rows = await queryDB(
-            `SELECT revoked FROM devices WHERE device_id = ? AND license_key = ? LIMIT 1`,
-            [decoded.deviceId, decoded.licenseKey]
-        );
-
-        if (!rows.length || rows[0].revoked === 1) {
-            return null; // Dispositivo revocado o no encontrado
-        }
-
-        return decoded;
+        return jwt.verify(token, JWT_SECRET);
     } catch (err) {
         return null;
     }
@@ -34,18 +22,34 @@ export async function verifyToken(req) {
  * Esto previene que una sesión siga activa después de la desvinculación.
  */
 export async function isDeviceRevoked(user) {
-    if (!user || !user.deviceId || !user.licenseKey) return true;
+    if (!user || !user.deviceId) return true; // El deviceId siempre es obligatorio
     
     try {
-        const rows = await queryDB(
-            `SELECT revoked FROM devices WHERE device_id = ? AND license_key = ? LIMIT 1`,
-            [user.deviceId, user.licenseKey]
-        );
-        if (!rows.length) return true; // Si desapareció, lo tratamos como revocado
-        return rows[0].revoked === 1;
+        // Buscamos el dispositivo por su ID único.
+        // Opcionalmente filtramos por licenseKey si viene en el token (modo estricto).
+        // Si no viene, permitimos la migración suave siempre que el dispositivo exista y no esté revocado.
+        let sql = `SELECT revoked, license_key FROM devices WHERE device_id = ? LIMIT 1`;
+        let params = [user.deviceId];
+        
+        const rows = await queryDB(sql, params);
+        if (!rows.length) {
+            console.warn(`⚠️ [Revoked Check] Dispositivo ${user.deviceId} no encontrado en DB.`);
+            return true; 
+        }
+        
+        const device = rows[0];
+        if (device.revoked === 1) return true;
+
+        // Si el token tiene licenseKey, verificamos consistencia (si la DB tiene una asignada)
+        if (user.licenseKey && device.license_key && device.license_key !== user.licenseKey) {
+            console.error(`❌ [Revoked Check] Conflicto de licencia para ${user.deviceId}. Token: ${user.licenseKey}, DB: ${device.license_key}`);
+            return true;
+        }
+
+        return false;
     } catch (e) {
         console.error('❌ [Revoked Check Error]:', e.message);
-        return false; // Ante error de DB, permitimos por ahora para evitar bloqueos falsos
+        return false; // Ante error crítico de DB, permitimos para evitar bloqueos falsos por infraestructura
     }
 }
 
