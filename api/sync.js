@@ -98,10 +98,16 @@ export default async function handler(req, res) {
                     (uuid, account_email, number, client_uuid, client_name, date, type, document_type, total, deleted_at, version, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON DUPLICATE KEY UPDATE 
-                    total      = IF(version < VALUES(version), VALUES(total), total),
-                    deleted_at = IF(version < VALUES(version), VALUES(deleted_at), deleted_at),
-                    updated_at = IF(version < VALUES(version), VALUES(updated_at), updated_at),
-                    version    = GREATEST(version, VALUES(version))`,
+                    number         = IF(version < VALUES(version), VALUES(number), number),
+                    client_uuid    = IF(version < VALUES(version), VALUES(client_uuid), client_uuid),
+                    client_name    = IF(version < VALUES(version), VALUES(client_name), client_name),
+                    date           = IF(version < VALUES(version), VALUES(date), date),
+                    type           = IF(version < VALUES(version), VALUES(type), type),
+                    document_type  = IF(version < VALUES(version), VALUES(document_type), document_type),
+                    total          = IF(version < VALUES(version), VALUES(total), total),
+                    deleted_at     = IF(version < VALUES(version), VALUES(deleted_at), deleted_at),
+                    updated_at     = IF(version < VALUES(version), VALUES(updated_at), updated_at),
+                    version        = GREATEST(version, VALUES(version))`,
                 [inv.uuid, user.email, inv.number, inv.client_uuid, inv.client_name, inv.date, inv.type, inv.document_type, inv.total, inv.deleted_at, inv.version, inv.updated_at]
             );
 
