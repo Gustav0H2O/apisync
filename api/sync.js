@@ -43,6 +43,9 @@ export default async function handler(req, res) {
         // ─── ABRIR UNA SOLA CONEXIÓN ─────────────────────────────────────
         connection = await getConnection();
 
+        // Función auxiliar para forzar undefined a null y evitar caídas en mysql2
+        const mapP = (arr) => arr.map(v => v === undefined ? null : v);
+
         // ─── FASE 0: PUSH PROFILE ────────────────────────────────────────
         if (profile) {
             await connection.execute(
@@ -55,7 +58,7 @@ export default async function handler(req, res) {
                     banner_color = ?, show_exchange_rate = ?, config_style = ?,
                     updated_at = NOW()
                  WHERE email = ?`,
-                [
+                mapP([
                     profile.business_name, profile.slogan, profile.rif, profile.address, profile.user_name, profile.user_email,
                     profile.user_phone, profile.accent_color, profile.header_color, profile.version,
                     profile.exchange_rate_mode, profile.working_currency, profile.display_currency, profile.print_currency,
@@ -63,7 +66,7 @@ export default async function handler(req, res) {
                     profile.show_banner_invoice, profile.show_banner_quote, profile.show_banner_delivery,
                     profile.banner_color, profile.show_exchange_rate, profile.config_style,
                     user.email
-                ]
+                ])
             );
         }
 
@@ -81,7 +84,7 @@ export default async function handler(req, res) {
                     deleted_at = IF(version < VALUES(version), VALUES(deleted_at), deleted_at),
                     updated_at = IF(version < VALUES(version), VALUES(updated_at), updated_at),
                     version    = GREATEST(version, VALUES(version))`,
-                [item.uuid, user.email, item.name, item.phone, item.rif, item.address, item.deleted_at, item.version, item.updated_at]
+                mapP([item.uuid, user.email, item.name, item.phone, item.rif, item.address, item.deleted_at, item.version, item.updated_at])
             );
         }
 
@@ -121,12 +124,12 @@ export default async function handler(req, res) {
                     deleted_at     = IF(version < VALUES(version), VALUES(deleted_at), deleted_at),
                     updated_at     = IF(version < VALUES(version), VALUES(updated_at), updated_at),
                     version        = GREATEST(version, VALUES(version))`,
-                [
+                mapP([
                     inv.uuid, user.email, inv.number, inv.client_uuid, inv.client_name, inv.client_address, inv.client_rif, inv.client_phone,
                     inv.iva_enabled, inv.payment_method, inv.due_date, inv.budget, inv.order_code, inv.transport, inv.salesperson, inv.delivery_method,
                     inv.ship_to, inv.observations, inv.subtotal, inv.tax, inv.total, inv.exchange_rate, inv.currency_symbol, inv.working_currency,
                     inv.converted_from_uuid, inv.date, inv.type, inv.document_type, inv.deleted_at, inv.version, inv.updated_at
-                ]
+                ])
             );
 
             if (inv.items && Array.isArray(inv.items)) {
@@ -145,7 +148,7 @@ export default async function handler(req, res) {
                             deleted_at  = IF(version < VALUES(version), VALUES(deleted_at), deleted_at),
                             updated_at  = IF(version < VALUES(version), VALUES(updated_at), updated_at),
                             version     = GREATEST(version, VALUES(version))`,
-                        [it.uuid, inv.uuid, it.code, it.description, it.quantity, it.unit_price, it.total_price, it.is_exempt, it.deleted_at, it.version, it.updated_at]
+                        mapP([it.uuid, inv.uuid, it.code, it.description, it.quantity, it.unit_price, it.total_price, it.is_exempt, it.deleted_at, it.version, it.updated_at])
                     );
                 }
             }
