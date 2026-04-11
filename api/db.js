@@ -47,7 +47,8 @@ export default async function handler(req, res) {
     let connection;
     try {
         connection = await getConnection();
-        const [rows] = await connection.execute(query, params || []);
+        const safeParams = (params || []).map(p => p === undefined ? null : p);
+        const [rows] = await connection.execute(query, safeParams);
         await connection.destroy(); // IMPORTANTÍSIMO AQUÍ
         return res.status(200).json({ rows });
     } catch (e) {
