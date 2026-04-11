@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import { queryDB } from './_db.js';
+import { getConnection } from './_db.js';
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
@@ -24,14 +24,15 @@ export function verifyToken(req) {
 export async function isDeviceRevoked(user) {
     if (!user || !user.deviceId) return true; // El deviceId siempre es obligatorio
     
+    let connection;
     try {
         // Buscamos el dispositivo por su ID único.
-        // Opcionalmente filtramos por licenseKey si viene en el token (modo estricto).
-        // Si no viene, permitimos la migración suave siempre que el dispositivo exista y no esté revocado.
         let sql = `SELECT revoked, license_key FROM devices WHERE device_id = ? LIMIT 1`;
         let params = [user.deviceId];
         
-        const rows = await queryDB(sql, params);
+        connection = await getConnection();
+        const [rows] = await connection.execute(sql, params);
+        
         if (!rows.length) {
             console.warn(`⚠️ [Revoked Check] Dispositivo ${user.deviceId} no encontrado en DB.`);
             return true; 
@@ -50,7 +51,23 @@ export async function isDeviceRevoked(user) {
     } catch (e) {
         console.error('❌ [Revoked Check Error]:', e.message);
         return false; // Ante error crítico de DB, permitimos para evitar bloqueos falsos por infraestructura
+    } finally {
+        if (connection) await connection.destroy();
     }
 }
 
-export { queryDB };
+export async function queryDB(sql, params) {
+  let connection;
+  try {
+    connection = await getConnection();
+    const [rows] = await connection.execute(sql, params || []);
+    return rows;
+  } catch (error) {
+    console.error('Database Error:', error);
+    throw error;
+  } finally {
+    if (connection) {
+      await connection.destroy();
+    }
+  }
+}
