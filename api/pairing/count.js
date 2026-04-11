@@ -21,8 +21,8 @@ export default async function handler(req, res) {
         [DEFAULT_MAX_DEVICES, user.licenseKey]
       );
       if (policyRows.length) {
-        maxDevices = Number(policyRows[0].max_devices_allowed || DEFAULT_MAX_DEVICES);
-        pairCooldownDays = Number(policyRows[0].pair_cooldown_days || 2);
+        maxDevices = policyRows[0].max_devices_allowed !== null ? Number(policyRows[0].max_devices_allowed) : DEFAULT_MAX_DEVICES;
+        pairCooldownDays = policyRows[0].pair_cooldown_days !== null ? Number(policyRows[0].pair_cooldown_days) : 2;
       }
     } catch (_) {}
 
