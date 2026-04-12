@@ -50,7 +50,7 @@ export default async function handler(req, res) {
         if (profile) {
             await connection.execute(
                 `UPDATE clientes SET 
-                    business_name = ?, slogan = ?, rif = ?, address = ?, user_name = ?, user_email = ?,
+                    business_name = ?, slogan = ?, rif = ?, address = ?, user_name = ?,
                     user_phone = ?, accent_color = ?, header_color = ?, version = ?,
                     exchange_rate_mode = ?, working_currency = ?, display_currency = ?, print_currency = ?,
                     manual_rate = ?, use_latest_rate = ?, usd_rate_latest = ?, usd_rate_previous = ?,
@@ -59,7 +59,7 @@ export default async function handler(req, res) {
                     updated_at = NOW()
                  WHERE email = ?`,
                 mapP([
-                    profile.business_name, profile.slogan, profile.rif, profile.address, profile.user_name, profile.user_email,
+                    profile.business_name, profile.slogan, profile.rif, profile.address, profile.user_name,
                     profile.user_phone, profile.accent_color, profile.header_color, profile.version,
                     profile.exchange_rate_mode, profile.working_currency, profile.display_currency, profile.print_currency,
                     profile.manual_rate, profile.use_latest_rate, profile.usd_rate_latest, profile.usd_rate_previous,
@@ -174,7 +174,7 @@ export default async function handler(req, res) {
 
         // PULL PROFILE
         const [profileRows] = await connection.execute(
-            `SELECT business_name, slogan, rif, address, user_name, user_email, user_phone, accent_color, header_color,
+            `SELECT business_name, slogan, rif, address, user_name, email, user_phone, accent_color, header_color,
                     exchange_rate_mode, working_currency, display_currency, print_currency,
                     manual_rate, use_latest_rate, usd_rate_latest, usd_rate_previous,
                     show_banner_invoice, show_banner_quote, show_banner_delivery,
