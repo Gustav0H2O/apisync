@@ -69,13 +69,13 @@ export default async function handler(req, res) {
 
     await queryDB(
       `UPDATE devices
-       SET revoked = 1, last_seen = NOW()
+       SET revoked = 1, last_seen = CURRENT_TIMESTAMP
        WHERE license_key = ? AND device_id = ?`,
       [license_key, rowToUnlink.device_id]
     );
 
     const cooldownRows = await queryDB(
-      `SELECT DATE_ADD(NOW(), INTERVAL ? HOUR) AS cooldown_until`,
+      `SELECT datetime('now', '+' || ? || ' hours') AS cooldown_until`,
       [PAIR_COOLDOWN_HOURS]
     );
 

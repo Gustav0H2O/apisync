@@ -52,7 +52,7 @@ export default async function handler(req, res) {
 
         const lic = rows[0];
 
-        if (lic.tipo === 'saas' && lic.fecha_vencimiento) {
+        if (lic.tipo === 'SAAS' && lic.fecha_vencimiento) {
             if (new Date(lic.fecha_vencimiento) < new Date()) {
                 return res.status(401).json({ error: 'Licencia vencida' });
             }
@@ -75,7 +75,7 @@ export default async function handler(req, res) {
                 });
             }
             await queryDB(
-                `UPDATE devices SET last_seen = NOW() WHERE device_id = ? AND license_key = ?`,
+                `UPDATE devices SET last_seen = CURRENT_TIMESTAMP WHERE device_id = ? AND license_key = ?`,
                 [known.device_id, license_key]
             );
         } else {
@@ -92,7 +92,7 @@ export default async function handler(req, res) {
                 `SELECT last_seen
                  FROM devices
                  WHERE license_key = ? AND revoked = 1
-                   AND TIMESTAMPDIFF(HOUR, last_seen, NOW()) < ?
+                   AND (julianday('now') - julianday(last_seen)) * 24 < ?
                  ORDER BY last_seen DESC
                  LIMIT 1`,
                 [license_key, cooldownHours]
@@ -107,12 +107,12 @@ export default async function handler(req, res) {
 
             await queryDB(
                 `INSERT INTO devices (device_id, license_key, name, last_seen, paired_at, revoked)
-                 VALUES (?, ?, ?, NOW(), NOW(), 0)
-                 ON DUPLICATE KEY UPDATE 
-                    name        = IF(name IS NULL OR name = '', VALUES(name), name), 
-                    license_key = VALUES(license_key),
+                 VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0)
+                 ON CONFLICT(device_id) DO UPDATE SET 
+                    name        = CASE WHEN name IS NULL OR name = '' THEN excluded.name ELSE name END, 
+                    license_key = excluded.license_key,
                     revoked     = 0,
-                    last_seen   = NOW()`,
+                    last_seen   = CURRENT_TIMESTAMP`,
                 [device_id, license_key, name || 'Sin nombre']
             );
         }
