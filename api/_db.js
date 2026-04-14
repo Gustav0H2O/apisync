@@ -37,9 +37,13 @@ export async function getConnection() {
       
       const data = await client.execute({ sql: sqlReplaced, args: params || [] });
       
-      if (data.rows && data.rows.length > 0) {
+      // Si la consulta devolvió columnas, es un SELECT (incluso si hay 0 filas)
+      if (data.columns && data.columns.length > 0) {
         return [mapRows(data), data.columns];
-      } else if (data.rowsAffected !== undefined) {
+      }
+      
+      // Si no hay columnas pero sí rowsAffected, es un INSERT/UPDATE/DELETE
+      if (data.rowsAffected !== undefined) {
         // Simular ResultSetHeader de mysql2
         return [{
           affectedRows: data.rowsAffected,
@@ -49,14 +53,15 @@ export async function getConnection() {
           changedRows: data.rowsAffected
         }, null];
       }
-      return [[], null];
+
+      return [[], []];
     },
     query: async (sql, params) => {
       const data = await client.execute({ sql, args: params || [] });
-      if (data.rows && data.rows.length > 0) {
+      if (data.columns && data.columns.length > 0) {
         return [mapRows(data), data.columns];
       }
-      return [[], null];
+      return [[], []];
     },
     destroy: () => {},
     release: () => {},
@@ -68,7 +73,7 @@ export async function queryDB(sql, params) {
   const client = getLibsqlClient();
   try {
     const data = await client.execute({ sql, args: params || [] });
-    if (data.rows && data.rows.length > 0) {
+    if (data.columns && data.columns.length > 0) {
       return mapRows(data);
     } else if (data.rowsAffected !== undefined) {
       return {
