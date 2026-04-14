@@ -1,57 +1,84 @@
-import mysql from 'mysql2/promise';
+import { createClient } from "@libsql/client/web";
 
-let globalPool = null;
+let globalClient = null;
 
-export async function getConnection() {
-  if (!globalPool) {
-    globalPool = mysql.createPool({
-      host: process.env.DB_HOST,
-      port: process.env.DB_PORT || 3306,
-      user: process.env.DB_USER,
-      password: process.env.DB_PASSWORD,
-      database: process.env.DB_NAME,
-      ssl: { rejectUnauthorized: false },
-      connectionLimit: 1, // EL CORAZÓN DE LA PETICIÓN: Solo 1 conexión viva por instancia
-      waitForConnections: true,
-      queueLimit: 0,
-      enableKeepAlive: true,
-      keepAliveInitialDelay: 10000
+export function getLibsqlClient() {
+  if (!globalClient) {
+    globalClient = createClient({
+      url: process.env.TURSO_URL,
+      authToken: process.env.TURSO_TOKEN,
     });
   }
+  return globalClient;
+}
 
-  const connection = await globalPool.getConnection();
+/**
+ * Mapea el resultado de LibSQL a un formato compatible con mysql2 (Array de Objetos)
+ */
+function mapRows(data) {
+  if (!data.rows || data.rows.length === 0) return [];
+  return data.rows.map(row => {
+    const rowObj = {};
+    data.columns.forEach((col, idx) => {
+      rowObj[col] = row[idx];
+    });
+    return rowObj;
+  });
+}
 
-  // "LIMPIEZA DE ZOMBIES":
-  // Reducimos el timeout a 5 segundos. 
-  // Si el servidor de Vercel muere, la BD matará esta conexión sola en 5s.
-  await connection.query('SET SESSION wait_timeout = 5');
-  await connection.query('SET SESSION interactive_timeout = 5');
-
-  /**
-   * INTERCEPTOR DE SEGURIDAD:
-   * Para evitar que otros scripts cierren accidentalmente el Pool,
-   * devolvemos el objeto de conexión pero "falsificamos" el destroy.
-   * El pool se encarga de re-usarla.
-   */
-  const originalRelease = connection.release;
-  connection.destroy = () => connection.release(); // En un Pool, destruir es devolver al pool
-  connection.end = () => connection.release();
+// Para compatibilidad con el código existente que espera una "conexión"
+export async function getConnection() {
+  const client = getLibsqlClient();
   
-  return connection;
+  return {
+    execute: async (sql, params) => {
+      // Reemplazar sintaxis mysql por sqlite
+      let sqlReplaced = sql;
+      
+      const data = await client.execute({ sql: sqlReplaced, args: params || [] });
+      
+      if (data.rows && data.rows.length > 0) {
+        return [mapRows(data), data.columns];
+      } else if (data.rowsAffected !== undefined) {
+        // Simular ResultSetHeader de mysql2
+        return [{
+          affectedRows: data.rowsAffected,
+          insertId: data.lastInsertRowid ? data.lastInsertRowid.toString() : null,
+          warningStatus: 0,
+          serverStatus: 2,
+          changedRows: data.rowsAffected
+        }, null];
+      }
+      return [[], null];
+    },
+    query: async (sql, params) => {
+      const data = await client.execute({ sql, args: params || [] });
+      if (data.rows && data.rows.length > 0) {
+        return [mapRows(data), data.columns];
+      }
+      return [[], null];
+    },
+    destroy: () => {},
+    release: () => {},
+    end: () => {}
+  };
 }
 
 export async function queryDB(sql, params) {
-  let connection;
+  const client = getLibsqlClient();
   try {
-    connection = await getConnection();
-    const [rows] = await connection.execute(sql, params || []);
-    return rows;
+    const data = await client.execute({ sql, args: params || [] });
+    if (data.rows && data.rows.length > 0) {
+      return mapRows(data);
+    } else if (data.rowsAffected !== undefined) {
+      return {
+        affectedRows: data.rowsAffected,
+        insertId: data.lastInsertRowid ? data.lastInsertRowid.toString() : null
+      };
+    }
+    return [];
   } catch (error) {
     console.error('Database Error:', error);
     throw error;
-  } finally {
-    if (connection && connection.release) {
-      connection.release(); // La devolvemos al Pool de 1 conexión
-    }
   }
 }

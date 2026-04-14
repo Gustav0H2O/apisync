@@ -4,7 +4,7 @@
   "description": "Backend para sincronización de FactuFlow",
   "type": "module",
   "dependencies": {
-    "mysql2": "^3.9.2",
+    "@libsql/client": "^0.14.0",
     "jsonwebtoken": "^9.0.2",
     "uuid": "^9.0.1"
   },

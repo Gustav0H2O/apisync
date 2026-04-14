@@ -12,7 +12,7 @@ export default async function handler(req, res) {
     try {
         const rows = await queryDB(
             `SELECT license_key, device_id_source FROM pairing_sessions 
-       WHERE session_id = ? AND secret = ? AND confirmed = 0 AND expires_at > NOW()`,
+       WHERE session_id = ? AND secret = ? AND confirmed = 0 AND expires_at > CURRENT_TIMESTAMP`,
             [session_id, secret]
         );
 

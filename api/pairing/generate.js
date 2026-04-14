@@ -54,10 +54,10 @@ export default async function handler(req, res) {
         }
 
         const recentRevoked = await queryDB(
-            `SELECT DATE_ADD(last_seen, INTERVAL ? HOUR) AS cooldown_until
+            `SELECT datetime(last_seen, '+' || ? || ' hours') AS cooldown_until
              FROM devices
              WHERE license_key = ? AND revoked = 1
-               AND TIMESTAMPDIFF(HOUR, last_seen, NOW()) < ?
+               AND (julianday('now') - julianday(last_seen)) * 24 < ?
              ORDER BY last_seen DESC
              LIMIT 1`,
             [cooldownHours, user.licenseKey, cooldownHours]
@@ -72,7 +72,7 @@ export default async function handler(req, res) {
 
         await queryDB(
             `INSERT INTO pairing_sessions (session_id, secret, device_id_source, license_key, expires_at)
-       VALUES (?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL 5 MINUTE))`,
+       VALUES (?, ?, ?, ?, datetime('now', '+5 minutes'))`,
             [sessionId, secret, user.deviceId, user.licenseKey]
         );
 
