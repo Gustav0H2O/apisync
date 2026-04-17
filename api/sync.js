@@ -3,6 +3,26 @@ import { verifyToken, isDeviceRevoked } from './_helpers.js';
 
 /**
  * POST /api/sync
+ * Cuerpo: { 
+ *   push: { 
+ *     clients: [...], 
+ *     invoices: [...],
+ *     profile: { ... }
+ *   }, 
+ *   last_sync: "ISO_STRING" 
+ * }
+ * Respuesta: { 
+ *   clients: [...], 
+ *   invoices: [...],
+ *   profile: { ... }
+ * }
+ *
+ * TODO en UNA SOLA CONEXIÓN de base de datos:
+ *  1. Hace PUSH de clientes
+ *  2. Hace PUSH de facturas + ítems
+ *  3. Hace PUSH del perfil de negocio (si se proporciona)
+ *  4. Hace PULL de todos los datos del usuario (incluyendo perfil)
+ *  5. Cierra la conexión
  */
 export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).end();
@@ -23,7 +43,7 @@ export default async function handler(req, res) {
         // ─── ABRIR UNA SOLA CONEXIÓN ─────────────────────────────────────
         connection = await getConnection();
 
-        // Función auxiliar para forzar undefined a null
+        // Función auxiliar para forzar undefined a null y evitar caídas en mysql2
         const mapP = (arr) => arr.map(v => v === undefined ? null : v);
 
         // ─── FASE 0: PUSH PROFILE ────────────────────────────────────────
@@ -36,7 +56,7 @@ export default async function handler(req, res) {
                     manual_rate = ?, use_latest_rate = ?, usd_rate_latest = ?, usd_rate_previous = ?,
                     show_banner_invoice = ?, show_banner_quote = ?, show_banner_delivery = ?,
                     banner_color = ?, show_exchange_rate = ?, config_style = ?,
-                    updated_at = CURRENT_TIMESTAMP
+                    products_by_stock = ?, updated_at = NOW()
                  WHERE email = ?`,
                 mapP([
                     profile.business_name, profile.slogan, profile.rif, profile.address, profile.user_name,
@@ -45,6 +65,7 @@ export default async function handler(req, res) {
                     profile.manual_rate, profile.use_latest_rate, profile.usd_rate_latest, profile.usd_rate_previous,
                     profile.show_banner_invoice, profile.show_banner_quote, profile.show_banner_delivery,
                     profile.banner_color, profile.show_exchange_rate, profile.config_style,
+                    profile.products_by_stock || 0,
                     user.email
                 ])
             );
@@ -56,14 +77,14 @@ export default async function handler(req, res) {
                 `INSERT INTO sync_clients 
                     (uuid, account_email, name, phone, rif, address, deleted_at, version, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                 ON CONFLICT(uuid) DO UPDATE SET
-                    name       = CASE WHEN excluded.version > sync_clients.version THEN excluded.name ELSE sync_clients.name END,
-                    phone      = CASE WHEN excluded.version > sync_clients.version THEN excluded.phone ELSE sync_clients.phone END,
-                    rif        = CASE WHEN excluded.version > sync_clients.version THEN excluded.rif ELSE sync_clients.rif END,
-                    address    = CASE WHEN excluded.version > sync_clients.version THEN excluded.address ELSE sync_clients.address END,
-                    deleted_at = CASE WHEN excluded.version > sync_clients.version THEN excluded.deleted_at ELSE sync_clients.deleted_at END,
-                    updated_at = CASE WHEN excluded.version > sync_clients.version THEN excluded.updated_at ELSE sync_clients.updated_at END,
-                    version    = MAX(sync_clients.version, excluded.version)`,
+                 ON DUPLICATE KEY UPDATE 
+                    name       = IF(version < VALUES(version), VALUES(name), name),
+                    phone      = IF(version < VALUES(version), VALUES(phone), phone),
+                    rif        = IF(version < VALUES(version), VALUES(rif), rif),
+                    address    = IF(version < VALUES(version), VALUES(address), address),
+                    deleted_at = IF(version < VALUES(version), VALUES(deleted_at), deleted_at),
+                    updated_at = IF(version < VALUES(version), VALUES(updated_at), updated_at),
+                    version    = GREATEST(version, VALUES(version))`,
                 mapP([item.uuid, user.email, item.name, item.phone, item.rif, item.address, item.deleted_at, item.version, item.updated_at])
             );
         }
@@ -74,36 +95,36 @@ export default async function handler(req, res) {
                 `INSERT INTO sync_invoices 
                     (uuid, account_email, number, client_uuid, client_name, client_address, client_rif, client_phone, iva_enabled, payment_method, due_date, budget, order_code, transport, salesperson, delivery_method, ship_to, observations, subtotal, tax, total, exchange_rate, currency_symbol, working_currency, converted_from_uuid, date, type, document_type, deleted_at, version, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                 ON CONFLICT(uuid) DO UPDATE SET
-                    number         = CASE WHEN excluded.version > sync_invoices.version THEN excluded.number ELSE sync_invoices.number END,
-                    client_uuid    = CASE WHEN excluded.version > sync_invoices.version THEN excluded.client_uuid ELSE sync_invoices.client_uuid END,
-                    client_name    = CASE WHEN excluded.version > sync_invoices.version THEN excluded.client_name ELSE sync_invoices.client_name END,
-                    client_address = CASE WHEN excluded.version > sync_invoices.version THEN excluded.client_address ELSE sync_invoices.client_address END,
-                    client_rif     = CASE WHEN excluded.version > sync_invoices.version THEN excluded.client_rif ELSE sync_invoices.client_rif END,
-                    client_phone   = CASE WHEN excluded.version > sync_invoices.version THEN excluded.client_phone ELSE sync_invoices.client_phone END,
-                    iva_enabled    = CASE WHEN excluded.version > sync_invoices.version THEN excluded.iva_enabled ELSE sync_invoices.iva_enabled END,
-                    payment_method = CASE WHEN excluded.version > sync_invoices.version THEN excluded.payment_method ELSE sync_invoices.payment_method END,
-                    due_date       = CASE WHEN excluded.version > sync_invoices.version THEN excluded.due_date ELSE sync_invoices.due_date END,
-                    budget         = CASE WHEN excluded.version > sync_invoices.version THEN excluded.budget ELSE sync_invoices.budget END,
-                    order_code     = CASE WHEN excluded.version > sync_invoices.version THEN excluded.order_code ELSE sync_invoices.order_code END,
-                    transport      = CASE WHEN excluded.version > sync_invoices.version THEN excluded.transport ELSE sync_invoices.transport END,
-                    salesperson    = CASE WHEN excluded.version > sync_invoices.version THEN excluded.salesperson ELSE sync_invoices.salesperson END,
-                    delivery_method= CASE WHEN excluded.version > sync_invoices.version THEN excluded.delivery_method ELSE sync_invoices.delivery_method END,
-                    ship_to        = CASE WHEN excluded.version > sync_invoices.version THEN excluded.ship_to ELSE sync_invoices.ship_to END,
-                    observations   = CASE WHEN excluded.version > sync_invoices.version THEN excluded.observations ELSE sync_invoices.observations END,
-                    subtotal       = CASE WHEN excluded.version > sync_invoices.version THEN excluded.subtotal ELSE sync_invoices.subtotal END,
-                    tax            = CASE WHEN excluded.version > sync_invoices.version THEN excluded.tax ELSE sync_invoices.tax END,
-                    total          = CASE WHEN excluded.version > sync_invoices.version THEN excluded.total ELSE sync_invoices.total END,
-                    exchange_rate  = CASE WHEN excluded.version > sync_invoices.version THEN excluded.exchange_rate ELSE sync_invoices.exchange_rate END,
-                    currency_symbol= CASE WHEN excluded.version > sync_invoices.version THEN excluded.currency_symbol ELSE sync_invoices.currency_symbol END,
-                    working_currency= CASE WHEN excluded.version > sync_invoices.version THEN excluded.working_currency ELSE sync_invoices.working_currency END,
-                    converted_from_uuid= CASE WHEN excluded.version > sync_invoices.version THEN excluded.converted_from_uuid ELSE sync_invoices.converted_from_uuid END,
-                    date           = CASE WHEN excluded.version > sync_invoices.version THEN excluded.date ELSE sync_invoices.date END,
-                    type           = CASE WHEN excluded.version > sync_invoices.version THEN excluded.type ELSE sync_invoices.type END,
-                    document_type  = CASE WHEN excluded.version > sync_invoices.version THEN excluded.document_type ELSE sync_invoices.document_type END,
-                    deleted_at     = CASE WHEN excluded.version > sync_invoices.version THEN excluded.deleted_at ELSE sync_invoices.deleted_at END,
-                    updated_at     = CASE WHEN excluded.version > sync_invoices.version THEN excluded.updated_at ELSE sync_invoices.updated_at END,
-                    version        = MAX(sync_invoices.version, excluded.version)`,
+                 ON DUPLICATE KEY UPDATE 
+                    number         = IF(version < VALUES(version), VALUES(number), number),
+                    client_uuid    = IF(version < VALUES(version), VALUES(client_uuid), client_uuid),
+                    client_name    = IF(version < VALUES(version), VALUES(client_name), client_name),
+                    client_address = IF(version < VALUES(version), VALUES(client_address), client_address),
+                    client_rif     = IF(version < VALUES(version), VALUES(client_rif), client_rif),
+                    client_phone   = IF(version < VALUES(version), VALUES(client_phone), client_phone),
+                    iva_enabled    = IF(version < VALUES(version), VALUES(iva_enabled), iva_enabled),
+                    payment_method = IF(version < VALUES(version), VALUES(payment_method), payment_method),
+                    due_date       = IF(version < VALUES(version), VALUES(due_date), due_date),
+                    budget         = IF(version < VALUES(version), VALUES(budget), budget),
+                    order_code     = IF(version < VALUES(version), VALUES(order_code), order_code),
+                    transport      = IF(version < VALUES(version), VALUES(transport), transport),
+                    salesperson    = IF(version < VALUES(version), VALUES(salesperson), salesperson),
+                    delivery_method= IF(version < VALUES(version), VALUES(delivery_method), delivery_method),
+                    ship_to        = IF(version < VALUES(version), VALUES(ship_to), ship_to),
+                    observations   = IF(version < VALUES(version), VALUES(observations), observations),
+                    subtotal       = IF(version < VALUES(version), VALUES(subtotal), subtotal),
+                    tax            = IF(version < VALUES(version), VALUES(tax), tax),
+                    total          = IF(version < VALUES(version), VALUES(total), total),
+                    exchange_rate  = IF(version < VALUES(version), VALUES(exchange_rate), exchange_rate),
+                    currency_symbol= IF(version < VALUES(version), VALUES(currency_symbol), currency_symbol),
+                    working_currency= IF(version < VALUES(version), VALUES(working_currency), working_currency),
+                    converted_from_uuid= IF(version < VALUES(version), VALUES(converted_from_uuid), converted_from_uuid),
+                    date           = IF(version < VALUES(version), VALUES(date), date),
+                    type           = IF(version < VALUES(version), VALUES(type), type),
+                    document_type  = IF(version < VALUES(version), VALUES(document_type), document_type),
+                    deleted_at     = IF(version < VALUES(version), VALUES(deleted_at), deleted_at),
+                    updated_at     = IF(version < VALUES(version), VALUES(updated_at), updated_at),
+                    version        = GREATEST(version, VALUES(version))`,
                 mapP([
                     inv.uuid, user.email, inv.number, inv.client_uuid, inv.client_name, inv.client_address, inv.client_rif, inv.client_phone,
                     inv.iva_enabled, inv.payment_method, inv.due_date, inv.budget, inv.order_code, inv.transport, inv.salesperson, inv.delivery_method,
@@ -118,16 +139,16 @@ export default async function handler(req, res) {
                         `INSERT INTO sync_invoice_items 
                             (uuid, invoice_uuid, code, description, quantity, unit_price, total_price, is_exempt, deleted_at, version, updated_at)
                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                         ON CONFLICT(uuid) DO UPDATE SET
-                            code        = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.code ELSE sync_invoice_items.code END,
-                            description = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.description ELSE sync_invoice_items.description END,
-                            quantity    = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.quantity ELSE sync_invoice_items.quantity END,
-                            unit_price  = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.unit_price ELSE sync_invoice_items.unit_price END,
-                            total_price = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.total_price ELSE sync_invoice_items.total_price END,
-                            is_exempt   = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.is_exempt ELSE sync_invoice_items.is_exempt END,
-                            deleted_at  = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.deleted_at ELSE sync_invoice_items.deleted_at END,
-                            updated_at  = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.updated_at ELSE sync_invoice_items.updated_at END,
-                            version     = MAX(sync_invoice_items.version, excluded.version)`,
+                         ON DUPLICATE KEY UPDATE 
+                            code        = IF(version < VALUES(version), VALUES(code), code),
+                            description = IF(version < VALUES(version), VALUES(description), description),
+                            quantity    = IF(version < VALUES(version), VALUES(quantity), quantity),
+                            unit_price  = IF(version < VALUES(version), VALUES(unit_price), unit_price),
+                            total_price = IF(version < VALUES(version), VALUES(total_price), total_price),
+                            is_exempt   = IF(version < VALUES(version), VALUES(is_exempt), is_exempt),
+                            deleted_at  = IF(version < VALUES(version), VALUES(deleted_at), deleted_at),
+                            updated_at  = IF(version < VALUES(version), VALUES(updated_at), updated_at),
+                            version     = GREATEST(version, VALUES(version))`,
                         mapP([it.uuid, inv.uuid, it.code, it.description, it.quantity, it.unit_price, it.total_price, it.is_exempt, it.deleted_at, it.version, it.updated_at])
                     );
                 }
@@ -158,7 +179,7 @@ export default async function handler(req, res) {
                     exchange_rate_mode, working_currency, display_currency, print_currency,
                     manual_rate, use_latest_rate, usd_rate_latest, usd_rate_previous,
                     show_banner_invoice, show_banner_quote, show_banner_delivery,
-                    banner_color, show_exchange_rate, config_style,
+                    banner_color, show_exchange_rate, config_style, products_by_stock,
                     version, updated_at 
              FROM clientes WHERE email = ? LIMIT 1`,
             [user.email]
