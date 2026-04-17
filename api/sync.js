@@ -35,6 +35,7 @@ export default async function handler(req, res) {
         return res.status(401).json({ error: 'DEVICE_REVOKED', message: 'Este dispositivo ha sido desvinculado' });
     }
 
+    const push = req.body.push || {};
     const { clients = [], invoices = [], profile = null, products = [], suppliers = [], categories = [], stock_movements = [] } = push;
 
     let connection;
