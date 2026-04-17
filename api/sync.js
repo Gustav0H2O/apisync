@@ -35,8 +35,7 @@ export default async function handler(req, res) {
         return res.status(401).json({ error: 'DEVICE_REVOKED', message: 'Este dispositivo ha sido desvinculado' });
     }
 
-    const { push = {}, last_sync } = req.body;
-    const { clients = [], invoices = [], profile = null, products = [], suppliers = [], categories = [] } = push;
+    const { clients = [], invoices = [], profile = null, products = [], suppliers = [], categories = [], stock_movements = [] } = push;
 
     let connection;
     try {
@@ -152,6 +151,28 @@ export default async function handler(req, res) {
             );
         }
 
+        // ─── FASE 1.4: PUSH MOVIMIENTOS STOCK ────────────────────────────
+        for (const item of stock_movements) {
+            await connection.execute(
+                `INSERT INTO sync_stock_movements 
+                    (uuid, account_email, product_uuid, quantity, type, reason, reference_uuid, date, deleted_at, version, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(uuid) DO UPDATE SET
+                    quantity       = CASE WHEN excluded.version > sync_stock_movements.version THEN excluded.quantity ELSE sync_stock_movements.quantity END,
+                    type           = CASE WHEN excluded.version > sync_stock_movements.version THEN excluded.type ELSE sync_stock_movements.type END,
+                    reason         = CASE WHEN excluded.version > sync_stock_movements.version THEN excluded.reason ELSE sync_stock_movements.reason END,
+                    reference_uuid = CASE WHEN excluded.version > sync_stock_movements.version THEN excluded.reference_uuid ELSE sync_stock_movements.reference_uuid END,
+                    date           = CASE WHEN excluded.version > sync_stock_movements.version THEN excluded.date ELSE sync_stock_movements.date END,
+                    deleted_at     = CASE WHEN excluded.version > sync_stock_movements.version THEN excluded.deleted_at ELSE sync_stock_movements.deleted_at END,
+                    updated_at     = CASE WHEN excluded.version > sync_stock_movements.version THEN excluded.updated_at ELSE sync_stock_movements.updated_at END,
+                    version        = CASE WHEN excluded.version > sync_stock_movements.version THEN excluded.version ELSE sync_stock_movements.version END`,
+                mapP([
+                    item.uuid, user.email, item.product_uuid, item.quantity, item.type, item.reason, 
+                    item.reference_uuid, item.date, item.deleted_at, item.version, item.updated_at
+                ])
+            );
+        }
+
         // ─── FASE 2: PUSH FACTURAS + ÍTEMS ───────────────────────────────
         for (const inv of invoices) {
             await connection.execute(
@@ -230,6 +251,7 @@ export default async function handler(req, res) {
         const [remoteSuppliers]= await connection.execute(`SELECT * FROM sync_suppliers WHERE account_email = ?`, [user.email]);
         const [remoteProducts] = await connection.execute(`SELECT * FROM sync_products WHERE account_email = ?`, [user.email]);
         const [remoteCategories]=await connection.execute(`SELECT * FROM sync_categories WHERE account_email = ?`, [user.email]);
+        const [remoteMovements] = await connection.execute(`SELECT * FROM sync_stock_movements WHERE account_email = ?`, [user.email]);
 
         for (const inv of remoteInvoices) {
             const [items] = await connection.execute(
@@ -267,6 +289,7 @@ export default async function handler(req, res) {
             suppliers:  remoteSuppliers,
             products:   remoteProducts,
             categories: remoteCategories,
+            stock_movements: remoteMovements,
             profile:    profileRows[0] || null,
         });
 
