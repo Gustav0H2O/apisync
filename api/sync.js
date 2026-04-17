@@ -36,7 +36,7 @@ export default async function handler(req, res) {
     }
 
     const { push = {}, last_sync } = req.body;
-    const { clients = [], invoices = [], profile = null } = push;
+    const { clients = [], invoices = [], profile = null, products = [], suppliers = [], categories = [] } = push;
 
     let connection;
     try {
@@ -86,6 +86,69 @@ export default async function handler(req, res) {
                     updated_at = CASE WHEN excluded.version > sync_clients.version THEN excluded.updated_at ELSE sync_clients.updated_at END,
                     version    = CASE WHEN excluded.version > sync_clients.version THEN excluded.version ELSE sync_clients.version END`,
                 mapP([item.uuid, user.email, item.name, item.phone, item.rif, item.address, item.deleted_at, item.version, item.updated_at])
+            );
+        }
+
+        // ─── FASE 1.1: PUSH PROVEEDORES ───────────────────────────────────
+        for (const item of suppliers) {
+            await connection.execute(
+                `INSERT INTO sync_suppliers 
+                    (uuid, account_email, name, phone, rif, address, email, contact_person, deleted_at, version, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(uuid) DO UPDATE SET
+                    name           = CASE WHEN excluded.version > sync_suppliers.version THEN excluded.name ELSE sync_suppliers.name END,
+                    phone          = CASE WHEN excluded.version > sync_suppliers.version THEN excluded.phone ELSE sync_suppliers.phone END,
+                    rif            = CASE WHEN excluded.version > sync_suppliers.version THEN excluded.rif ELSE sync_suppliers.rif END,
+                    address        = CASE WHEN excluded.version > sync_suppliers.version THEN excluded.address ELSE sync_suppliers.address END,
+                    email          = CASE WHEN excluded.version > sync_suppliers.version THEN excluded.email ELSE sync_suppliers.email END,
+                    contact_person = CASE WHEN excluded.version > sync_suppliers.version THEN excluded.contact_person ELSE sync_suppliers.contact_person END,
+                    deleted_at     = CASE WHEN excluded.version > sync_suppliers.version THEN excluded.deleted_at ELSE sync_suppliers.deleted_at END,
+                    updated_at     = CASE WHEN excluded.version > sync_suppliers.version THEN excluded.updated_at ELSE sync_suppliers.updated_at END,
+                    version        = CASE WHEN excluded.version > sync_suppliers.version THEN excluded.version ELSE sync_suppliers.version END`,
+                mapP([item.uuid, user.email, item.name, item.phone, item.rif, item.address, item.email, item.contact_person, item.deleted_at, item.version, item.updated_at])
+            );
+        }
+
+        // ─── FASE 1.2: PUSH PRODUCTOS ──────────────────────────────────────
+        for (const item of products) {
+            await connection.execute(
+                `INSERT INTO sync_products 
+                    (uuid, account_email, code, name, description, unit, sale_price, is_exempt, supplier_uuid, stock, sales, category, deleted_at, version, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(uuid) DO UPDATE SET
+                    code           = CASE WHEN excluded.version > sync_products.version THEN excluded.code ELSE sync_products.code END,
+                    name           = CASE WHEN excluded.version > sync_products.version THEN excluded.name ELSE sync_products.name END,
+                    description    = CASE WHEN excluded.version > sync_products.version THEN excluded.description ELSE sync_products.description END,
+                    unit           = CASE WHEN excluded.version > sync_products.version THEN excluded.unit ELSE sync_products.unit END,
+                    sale_price     = CASE WHEN excluded.version > sync_products.version THEN excluded.sale_price ELSE sync_products.sale_price END,
+                    is_exempt      = CASE WHEN excluded.version > sync_products.version THEN excluded.is_exempt ELSE sync_products.is_exempt END,
+                    supplier_uuid  = CASE WHEN excluded.version > sync_products.version THEN excluded.supplier_uuid ELSE sync_products.supplier_uuid END,
+                    stock          = CASE WHEN excluded.version > sync_products.version THEN excluded.stock ELSE sync_products.stock END,
+                    sales          = CASE WHEN excluded.version > sync_products.version THEN excluded.sales ELSE sync_products.sales END,
+                    category       = CASE WHEN excluded.version > sync_products.version THEN excluded.category ELSE sync_products.category END,
+                    deleted_at     = CASE WHEN excluded.version > sync_products.version THEN excluded.deleted_at ELSE sync_products.deleted_at END,
+                    updated_at     = CASE WHEN excluded.version > sync_products.version THEN excluded.updated_at ELSE sync_products.updated_at END,
+                    version        = CASE WHEN excluded.version > sync_products.version THEN excluded.version ELSE sync_products.version END`,
+                mapP([
+                    item.uuid, user.email, item.code, item.name, item.description, item.unit, item.sale_price, 
+                    item.is_exempt, item.supplier_uuid, item.stock, item.sales, item.category, 
+                    item.deleted_at, item.version, item.updated_at
+                ])
+            );
+        }
+
+        // ─── FASE 1.3: PUSH CATEGORÍAS ────────────────────────────────────
+        for (const item of categories) {
+            await connection.execute(
+                `INSERT INTO sync_categories 
+                    (uuid, account_email, name, deleted_at, version, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(uuid) DO UPDATE SET
+                    name       = CASE WHEN excluded.version > sync_categories.version THEN excluded.name ELSE sync_categories.name END,
+                    deleted_at = CASE WHEN excluded.version > sync_categories.version THEN excluded.deleted_at ELSE sync_categories.deleted_at END,
+                    updated_at = CASE WHEN excluded.version > sync_categories.version THEN excluded.updated_at ELSE sync_categories.updated_at END,
+                    version    = CASE WHEN excluded.version > sync_categories.version THEN excluded.version ELSE sync_categories.version END`,
+                mapP([item.uuid, user.email, item.name, item.deleted_at, item.version, item.updated_at])
             );
         }
 
@@ -164,6 +227,9 @@ export default async function handler(req, res) {
 
         const [remoteClients]  = await connection.execute(baseClientSql,  clientParams);
         const [remoteInvoices] = await connection.execute(baseInvoiceSql, invoiceParams);
+        const [remoteSuppliers]= await connection.execute(`SELECT * FROM sync_suppliers WHERE account_email = ?`, [user.email]);
+        const [remoteProducts] = await connection.execute(`SELECT * FROM sync_products WHERE account_email = ?`, [user.email]);
+        const [remoteCategories]=await connection.execute(`SELECT * FROM sync_categories WHERE account_email = ?`, [user.email]);
 
         for (const inv of remoteInvoices) {
             const [items] = await connection.execute(
@@ -196,9 +262,12 @@ export default async function handler(req, res) {
         connection.destroy();
 
         return res.status(200).json({
-            clients:  remoteClients,
-            invoices: remoteInvoices,
-            profile:  profileRows[0] || null,
+            clients:    remoteClients,
+            invoices:   remoteInvoices,
+            suppliers:  remoteSuppliers,
+            products:   remoteProducts,
+            categories: remoteCategories,
+            profile:    profileRows[0] || null,
         });
 
     } catch (e) {
