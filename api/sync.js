@@ -56,7 +56,7 @@ export default async function handler(req, res) {
                     manual_rate = ?, use_latest_rate = ?, usd_rate_latest = ?, usd_rate_previous = ?,
                     show_banner_invoice = ?, show_banner_quote = ?, show_banner_delivery = ?,
                     banner_color = ?, show_exchange_rate = ?, config_style = ?,
-                    products_by_stock = ?, updated_at = NOW()
+                    products_by_stock = ?, updated_at = CURRENT_TIMESTAMP
                  WHERE email = ?`,
                 mapP([
                     profile.business_name, profile.slogan, profile.rif, profile.address, profile.user_name,
