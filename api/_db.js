@@ -63,6 +63,22 @@ export async function getConnection() {
       }
       return [[], []];
     },
+    batch: async (statements) => {
+      // statements: [{ sql, args }]
+      const data = await client.batch(statements, "write");
+      return data.map(result => {
+        if (result.columns && result.columns.length > 0) {
+          return [mapRows(result), result.columns];
+        }
+        return [{
+          affectedRows: result.rowsAffected,
+          insertId: result.lastInsertRowid ? result.lastInsertRowid.toString() : null,
+          warningStatus: 0,
+          serverStatus: 2,
+          changedRows: result.rowsAffected
+        }, null];
+      });
+    },
     destroy: () => {},
     release: () => {},
     end: () => {}
