@@ -46,19 +46,29 @@ export default async function handler(req, res) {
         // Función auxiliar para forzar undefined a null y evitar caídas en mysql2
         const mapP = (arr) => arr.map(v => v === undefined ? null : v);
 
+        const batchStatements = [];
+
         // ─── FASE 0: PUSH PROFILE ────────────────────────────────────────
         if (profile) {
-            await connection.execute(
-                `UPDATE clientes SET 
+            batchStatements.push({
+                sql: `UPDATE clientes SET 
                     business_name = ?, slogan = ?, rif = ?, address = ?, user_name = ?,
                     user_phone = ?, accent_color = ?, header_color = ?, version = ?,
                     exchange_rate_mode = ?, working_currency = ?, display_currency = ?, print_currency = ?,
                     manual_rate = ?, use_latest_rate = ?, usd_rate_latest = ?, usd_rate_previous = ?,
                     show_banner_invoice = ?, show_banner_quote = ?, show_banner_delivery = ?,
                     banner_color = ?, show_exchange_rate = ?, config_style = ?,
-                    products_by_stock = ?, updated_at = CURRENT_TIMESTAMP
-                 WHERE email = ?`,
-                mapP([
+                    products_by_stock = ?, 
+                    catalog_document_title = ?, catalog_layout_style = ?, catalog_logo_path = ?,
+                    catalog_logo_position = ?, catalog_banner_color = ?, catalog_header_color = ?,
+                    catalog_show_stock = ?, catalog_show_price_bs = ?, catalog_show_price_usd = ?,
+                    catalog_show_iva = ?, catalog_show_address = ?, catalog_show_phone = ?,
+                    catalog_show_slogan = ?, catalog_show_exchange_rate = ?, catalog_show_product_code = ?,
+                    catalog_show_product_description = ?, catalog_show_promos = ?, catalog_show_wholesale = ?,
+                    catalog_footer_text = ?, catalog_grayscale_mode = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                  WHERE email = ?`,
+                args: mapP([
                     profile.business_name, profile.slogan, profile.rif, profile.address, profile.user_name,
                     profile.user_phone, profile.accent_color, profile.header_color, profile.version,
                     profile.exchange_rate_mode, profile.working_currency, profile.display_currency, profile.print_currency,
@@ -66,18 +76,25 @@ export default async function handler(req, res) {
                     profile.show_banner_invoice, profile.show_banner_quote, profile.show_banner_delivery,
                     profile.banner_color, profile.show_exchange_rate, profile.config_style,
                     profile.products_by_stock || 0,
+                    profile.catalog_document_title, profile.catalog_layout_style, profile.catalog_logo_path,
+                    profile.catalog_logo_position, profile.catalog_banner_color, profile.catalog_header_color,
+                    profile.catalog_show_stock, profile.catalog_show_price_bs, profile.catalog_show_price_usd,
+                    profile.catalog_show_iva, profile.catalog_show_address, profile.catalog_show_phone,
+                    profile.catalog_show_slogan, profile.catalog_show_exchange_rate, profile.catalog_show_product_code,
+                    profile.catalog_show_product_description, profile.catalog_show_promos, profile.catalog_show_wholesale,
+                    profile.catalog_footer_text, profile.catalog_grayscale_mode,
                     user.email
                 ])
-            );
+            });
         }
 
         // ─── FASE 1: PUSH CLIENTES ────────────────────────────────────────
         for (const item of clients) {
-            await connection.execute(
-                `INSERT INTO sync_clients 
+            batchStatements.push({
+                sql: `INSERT INTO sync_clients 
                     (uuid, account_email, name, phone, rif, address, discount_rate, deleted_at, version, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                 ON CONFLICT(uuid) DO UPDATE SET
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  ON CONFLICT(uuid) DO UPDATE SET
                     name          = CASE WHEN excluded.version > sync_clients.version THEN excluded.name ELSE sync_clients.name END,
                     phone         = CASE WHEN excluded.version > sync_clients.version THEN excluded.phone ELSE sync_clients.phone END,
                     rif           = CASE WHEN excluded.version > sync_clients.version THEN excluded.rif ELSE sync_clients.rif END,
@@ -86,17 +103,17 @@ export default async function handler(req, res) {
                     deleted_at    = CASE WHEN excluded.version > sync_clients.version THEN excluded.deleted_at ELSE sync_clients.deleted_at END,
                     updated_at    = CASE WHEN excluded.version > sync_clients.version THEN excluded.updated_at ELSE sync_clients.updated_at END,
                     version       = CASE WHEN excluded.version > sync_clients.version THEN excluded.version ELSE sync_clients.version END`,
-                mapP([item.uuid, user.email, item.name, item.phone, item.rif, item.address, item.discount_rate, item.deleted_at, item.version, item.updated_at])
-            );
+                args: mapP([item.uuid, user.email, item.name, item.phone, item.rif, item.address, item.discount_rate, item.deleted_at, item.version, item.updated_at])
+            });
         }
 
         // ─── FASE 1.1: PUSH PROVEEDORES ───────────────────────────────────
         for (const item of suppliers) {
-            await connection.execute(
-                `INSERT INTO sync_suppliers 
+            batchStatements.push({
+                sql: `INSERT INTO sync_suppliers 
                     (uuid, account_email, name, phone, rif, address, email, contact_person, deleted_at, version, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                 ON CONFLICT(uuid) DO UPDATE SET
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  ON CONFLICT(uuid) DO UPDATE SET
                     name           = CASE WHEN excluded.version > sync_suppliers.version THEN excluded.name ELSE sync_suppliers.name END,
                     phone          = CASE WHEN excluded.version > sync_suppliers.version THEN excluded.phone ELSE sync_suppliers.phone END,
                     rif            = CASE WHEN excluded.version > sync_suppliers.version THEN excluded.rif ELSE sync_suppliers.rif END,
@@ -106,17 +123,17 @@ export default async function handler(req, res) {
                     deleted_at     = CASE WHEN excluded.version > sync_suppliers.version THEN excluded.deleted_at ELSE sync_suppliers.deleted_at END,
                     updated_at     = CASE WHEN excluded.version > sync_suppliers.version THEN excluded.updated_at ELSE sync_suppliers.updated_at END,
                     version        = CASE WHEN excluded.version > sync_suppliers.version THEN excluded.version ELSE sync_suppliers.version END`,
-                mapP([item.uuid, user.email, item.name, item.phone, item.rif, item.address, item.email, item.contact_person, item.deleted_at, item.version, item.updated_at])
-            );
+                args: mapP([item.uuid, user.email, item.name, item.phone, item.rif, item.address, item.email, item.contact_person, item.deleted_at, item.version, item.updated_at])
+            });
         }
 
         // ─── FASE 1.2: PUSH PRODUCTOS ──────────────────────────────────────
         for (const item of products) {
-            await connection.execute(
-                `INSERT INTO sync_products 
+            batchStatements.push({
+                sql: `INSERT INTO sync_products 
                     (uuid, account_email, code, name, description, unit, sale_price, is_exempt, supplier_uuid, stock, sales, category, wholesale_price, wholesale_quantity, is_on_sale, promo_price, promo_quantity, promo_start_date, promo_end_date, deleted_at, version, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                 ON CONFLICT(uuid) DO UPDATE SET
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  ON CONFLICT(uuid) DO UPDATE SET
                     code               = CASE WHEN excluded.version > sync_products.version THEN excluded.code ELSE sync_products.code END,
                     name               = CASE WHEN excluded.version > sync_products.version THEN excluded.name ELSE sync_products.name END,
                     description        = CASE WHEN excluded.version > sync_products.version THEN excluded.description ELSE sync_products.description END,
@@ -137,38 +154,38 @@ export default async function handler(req, res) {
                     deleted_at         = CASE WHEN excluded.version > sync_products.version THEN excluded.deleted_at ELSE sync_products.deleted_at END,
                     updated_at         = CASE WHEN excluded.version > sync_products.version THEN excluded.updated_at ELSE sync_products.updated_at END,
                     version            = CASE WHEN excluded.version > sync_products.version THEN excluded.version ELSE sync_products.version END`,
-                mapP([
+                args: mapP([
                     item.uuid, user.email, item.code, item.name, item.description, item.unit, item.sale_price, 
                     item.is_exempt, item.supplier_uuid, item.stock, item.sales, item.category, 
                     item.wholesale_price, item.wholesale_quantity, item.is_on_sale, item.promo_price,
                     item.promo_quantity, item.promo_start_date, item.promo_end_date,
                     item.deleted_at, item.version, item.updated_at
                 ])
-            );
+            });
         }
 
         // ─── FASE 1.3: PUSH CATEGORÍAS ────────────────────────────────────
         for (const item of categories) {
-            await connection.execute(
-                `INSERT INTO sync_categories 
+            batchStatements.push({
+                sql: `INSERT INTO sync_categories 
                     (uuid, account_email, name, deleted_at, version, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?)
-                 ON CONFLICT(uuid) DO UPDATE SET
+                  VALUES (?, ?, ?, ?, ?, ?)
+                  ON CONFLICT(uuid) DO UPDATE SET
                     name       = CASE WHEN excluded.version > sync_categories.version THEN excluded.name ELSE sync_categories.name END,
                     deleted_at = CASE WHEN excluded.version > sync_categories.version THEN excluded.deleted_at ELSE sync_categories.deleted_at END,
                     updated_at = CASE WHEN excluded.version > sync_categories.version THEN excluded.updated_at ELSE sync_categories.updated_at END,
                     version    = CASE WHEN excluded.version > sync_categories.version THEN excluded.version ELSE sync_categories.version END`,
-                mapP([item.uuid, user.email, item.name, item.deleted_at, item.version, item.updated_at])
-            );
+                args: mapP([item.uuid, user.email, item.name, item.deleted_at, item.version, item.updated_at])
+            });
         }
 
         // ─── FASE 1.4: PUSH MOVIMIENTOS STOCK ────────────────────────────
         for (const item of stock_movements) {
-            await connection.execute(
-                `INSERT INTO sync_stock_movements 
+            batchStatements.push({
+                sql: `INSERT INTO sync_stock_movements 
                     (uuid, account_email, product_uuid, quantity, type, reason, reference_uuid, date, deleted_at, version, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                 ON CONFLICT(uuid) DO UPDATE SET
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  ON CONFLICT(uuid) DO UPDATE SET
                     quantity       = CASE WHEN excluded.version > sync_stock_movements.version THEN excluded.quantity ELSE sync_stock_movements.quantity END,
                     type           = CASE WHEN excluded.version > sync_stock_movements.version THEN excluded.type ELSE sync_stock_movements.type END,
                     reason         = CASE WHEN excluded.version > sync_stock_movements.version THEN excluded.reason ELSE sync_stock_movements.reason END,
@@ -177,20 +194,20 @@ export default async function handler(req, res) {
                     deleted_at     = CASE WHEN excluded.version > sync_stock_movements.version THEN excluded.deleted_at ELSE sync_stock_movements.deleted_at END,
                     updated_at     = CASE WHEN excluded.version > sync_stock_movements.version THEN excluded.updated_at ELSE sync_stock_movements.updated_at END,
                     version        = CASE WHEN excluded.version > sync_stock_movements.version THEN excluded.version ELSE sync_stock_movements.version END`,
-                mapP([
+                args: mapP([
                     item.uuid, user.email, item.product_uuid, item.quantity, item.type, item.reason, 
                     item.reference_uuid, item.date, item.deleted_at, item.version, item.updated_at
                 ])
-            );
+            });
         }
 
         // ─── FASE 2: PUSH FACTURAS + ÍTEMS ───────────────────────────────
         for (const inv of invoices) {
-            await connection.execute(
-                `INSERT INTO sync_invoices 
+            batchStatements.push({
+                sql: `INSERT INTO sync_invoices 
                     (uuid, account_email, number, client_uuid, client_name, client_address, client_rif, client_phone, iva_enabled, payment_method, due_date, budget, order_code, transport, salesperson, delivery_method, ship_to, observations, subtotal, tax, total, discount_amount, discount_percentage, exchange_rate, currency_symbol, working_currency, converted_from_uuid, date, type, document_type, deleted_at, version, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                 ON CONFLICT(uuid) DO UPDATE SET 
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  ON CONFLICT(uuid) DO UPDATE SET 
                     number              = CASE WHEN excluded.version > sync_invoices.version THEN excluded.number ELSE sync_invoices.number END,
                     client_uuid         = CASE WHEN excluded.version > sync_invoices.version THEN excluded.client_uuid ELSE sync_invoices.client_uuid END,
                     client_name         = CASE WHEN excluded.version > sync_invoices.version THEN excluded.client_name ELSE sync_invoices.client_name END,
@@ -222,18 +239,18 @@ export default async function handler(req, res) {
                     deleted_at          = CASE WHEN excluded.version > sync_invoices.version THEN excluded.deleted_at ELSE sync_invoices.deleted_at END,
                     updated_at          = CASE WHEN excluded.version > sync_invoices.version THEN excluded.updated_at ELSE sync_invoices.updated_at END,
                     version             = CASE WHEN excluded.version > sync_invoices.version THEN excluded.version ELSE sync_invoices.version END`,
-                mapP([
+                args: mapP([
                     inv.uuid, user.email, inv.number, inv.client_uuid, inv.client_name, inv.client_address, inv.client_rif, inv.client_phone,
                     inv.iva_enabled, inv.payment_method, inv.due_date, inv.budget, inv.order_code, inv.transport, inv.salesperson, inv.delivery_method,
                     inv.ship_to, inv.observations, inv.subtotal, inv.tax, inv.total, inv.discount_amount, inv.discount_percentage, inv.exchange_rate, inv.currency_symbol, inv.working_currency,
                     inv.converted_from_uuid, inv.date, inv.type, inv.document_type, inv.deleted_at, inv.version, inv.updated_at
                 ])
-            );
+            });
 
             if (inv.items && Array.isArray(inv.items)) {
                 for (const it of inv.items) {
-                    await connection.execute(
-                        `INSERT INTO sync_invoice_items 
+                    batchStatements.push({
+                        sql: `INSERT INTO sync_invoice_items 
                             (uuid, invoice_uuid, code, description, quantity, unit_price, total_price, is_exempt, discount, deleted_at, version, updated_at)
                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                           ON CONFLICT(uuid) DO UPDATE SET 
@@ -247,32 +264,72 @@ export default async function handler(req, res) {
                              deleted_at  = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.deleted_at ELSE sync_invoice_items.deleted_at END,
                              updated_at  = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.updated_at ELSE sync_invoice_items.updated_at END,
                              version     = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.version ELSE sync_invoice_items.version END`,
-                        mapP([it.uuid, inv.uuid, it.code, it.description, it.quantity, it.unit_price, it.total_price, it.is_exempt, it.discount, it.deleted_at, it.version, it.updated_at])
-                    );
+                        args: mapP([it.uuid, inv.uuid, it.code, it.description, it.quantity, it.unit_price, it.total_price, it.is_exempt, it.discount, it.deleted_at, it.version, it.updated_at])
+                    });
                 }
             }
         }
 
-        // ─── FASE 3: PULL (devolver todo al dispositivo) ─────────────────
+        // Ejecutar todo el PUSH en una sola transacción batch si hay algo que enviar
+        if (batchStatements.length > 0) {
+            await connection.batch(batchStatements);
+        }
+
+        // ─── FASE 3: PULL (devolver todo al dispositivo o solo los cambios desde last_sync) ───────
+        const lastSync = req.body.last_sync;
         let clientParams = [user.email];
         let invoiceParams = [user.email];
+        let otherParams = [user.email];
+        
+        let clientSql = `SELECT * FROM sync_clients WHERE account_email = ?`;
+        let invoiceSql = `SELECT * FROM sync_invoices WHERE account_email = ?`;
+        let supplierSql = `SELECT * FROM sync_suppliers WHERE account_email = ?`;
+        let productSql = `SELECT * FROM sync_products WHERE account_email = ?`;
+        let categorySql = `SELECT * FROM sync_categories WHERE account_email = ?`;
+        let movementSql = `SELECT * FROM sync_stock_movements WHERE account_email = ?`;
 
-        const baseClientSql  = `SELECT * FROM sync_clients  WHERE account_email = ?`;
-        const baseInvoiceSql = `SELECT * FROM sync_invoices WHERE account_email = ?`;
+        if (lastSync) {
+            const syncDate = new Date(lastSync).toISOString().slice(0, 19).replace('T', ' ');
+            clientSql += ` AND (updated_at >= ? OR deleted_at >= ?)`;
+            invoiceSql += ` AND (updated_at >= ? OR deleted_at >= ?)`;
+            supplierSql += ` AND (updated_at >= ? OR deleted_at >= ?)`;
+            productSql += ` AND (updated_at >= ? OR deleted_at >= ?)`;
+            categorySql += ` AND (updated_at >= ? OR deleted_at >= ?)`;
+            movementSql += ` AND (updated_at >= ? OR deleted_at >= ?)`;
+            
+            clientParams.push(syncDate, syncDate);
+            invoiceParams.push(syncDate, syncDate);
+            otherParams.push(syncDate, syncDate);
+        }
 
-        const [remoteClients]  = await connection.execute(baseClientSql,  clientParams);
-        const [remoteInvoices] = await connection.execute(baseInvoiceSql, invoiceParams);
-        const [remoteSuppliers]= await connection.execute(`SELECT * FROM sync_suppliers WHERE account_email = ?`, [user.email]);
-        const [remoteProducts] = await connection.execute(`SELECT * FROM sync_products WHERE account_email = ?`, [user.email]);
-        const [remoteCategories]=await connection.execute(`SELECT * FROM sync_categories WHERE account_email = ?`, [user.email]);
-        const [remoteMovements] = await connection.execute(`SELECT * FROM sync_stock_movements WHERE account_email = ?`, [user.email]);
+        const [remoteClients] = await connection.execute(clientSql, clientParams);
+        const [remoteInvoices] = await connection.execute(invoiceSql, invoiceParams);
+        const [remoteSuppliers] = await connection.execute(supplierSql, otherParams.length > 1 ? [user.email, ...otherParams.slice(1)] : [user.email]);
+        const [remoteProducts] = await connection.execute(productSql, otherParams.length > 1 ? [user.email, ...otherParams.slice(1)] : [user.email]);
+        const [remoteCategories] = await connection.execute(categorySql, otherParams.length > 1 ? [user.email, ...otherParams.slice(1)] : [user.email]);
+        const [remoteMovements] = await connection.execute(movementSql, otherParams.length > 1 ? [user.email, ...otherParams.slice(1)] : [user.email]);
 
-        for (const inv of remoteInvoices) {
-            const [items] = await connection.execute(
-                `SELECT * FROM sync_invoice_items WHERE invoice_uuid = ?`,
-                [inv.uuid]
+        // ─── OPTIMIZACIÓN N+1: Cargar todos los ítems de las facturas devueltas en UNA sola consulta ───
+        if (remoteInvoices.length > 0) {
+            const invoiceUuids = remoteInvoices.map(inv => inv.uuid);
+            // Creamos los placeholders (?, ?, ?) para el IN
+            const placeholders = invoiceUuids.map(() => '?').join(',');
+            const [allItems] = await connection.execute(
+                `SELECT * FROM sync_invoice_items WHERE invoice_uuid IN (${placeholders})`,
+                invoiceUuids
             );
-            inv.items = items;
+
+            // Agrupar ítems por su invoice_uuid
+            const itemsByInvoice = {};
+            for (const item of allItems) {
+                if (!itemsByInvoice[item.invoice_uuid]) itemsByInvoice[item.invoice_uuid] = [];
+                itemsByInvoice[item.invoice_uuid].push(item);
+            }
+
+            // Asignar los ítems a cada factura
+            for (const inv of remoteInvoices) {
+                inv.items = itemsByInvoice[inv.uuid] || [];
+            }
         }
 
         // PULL PROFILE
@@ -282,19 +339,17 @@ export default async function handler(req, res) {
                     manual_rate, use_latest_rate, usd_rate_latest, usd_rate_previous,
                     show_banner_invoice, show_banner_quote, show_banner_delivery,
                     banner_color, show_exchange_rate, config_style, products_by_stock,
+                    catalog_document_title, catalog_layout_style, catalog_logo_path,
+                    catalog_logo_position, catalog_banner_color, catalog_header_color,
+                    catalog_show_stock, catalog_show_price_bs, catalog_show_price_usd,
+                    catalog_show_iva, catalog_show_address, catalog_show_phone,
+                    catalog_show_slogan, catalog_show_exchange_rate, catalog_show_product_code,
+                    catalog_show_product_description, catalog_show_promos, catalog_show_wholesale,
+                    catalog_footer_text, catalog_grayscale_mode,
                     version, updated_at 
              FROM clientes WHERE email = ? LIMIT 1`,
             [user.email]
         );
-
-        /*
-        // ─── LOG ──────────────────────────────────────────────────────────
-        await connection.execute(
-            `INSERT INTO sync_log (device_id, action, entity_type, records_count) 
-             VALUES (?, 'SYNC', 'ALL', ?)`,
-            [user.deviceId || 'unknown', clients.length + invoices.length + remoteClients.length + remoteInvoices.length]
-        );
-        */
 
         // ─── CERRAR CONEXIÓN ANTES DE RESPONDER ───────────────────────────
         connection.destroy();
