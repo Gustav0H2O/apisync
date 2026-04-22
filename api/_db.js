@@ -17,7 +17,14 @@ export function getLibsqlClient() {
  */
 function mapRows(data) {
   if (!data.rows || data.rows.length === 0) return [];
+  
+  // En versiones recientes de @libsql/client, rows ya son objetos.
+  // Pero para mayor seguridad, verificamos si el primer elemento es un array.
   return data.rows.map(row => {
+    if (typeof row === 'object' && !Array.isArray(row)) {
+      return row; // Ya es un objeto {col: val}
+    }
+    // Si es un array de valores, lo mapeamos usando data.columns
     const rowObj = {};
     data.columns.forEach((col, idx) => {
       rowObj[col] = row[idx];
