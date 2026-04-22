@@ -1,12 +1,12 @@
-import { createClient } from "@libsql/client/web";
+import { createClient } from "@libsql/client";
 
 let globalClient = null;
 
 export function getLibsqlClient() {
   if (!globalClient) {
     globalClient = createClient({
-      url: process.env.TURSO_URL,
-      authToken: process.env.TURSO_TOKEN,
+      url: process.env.TURSO_URL || "",
+      authToken: process.env.TURSO_TOKEN || "",
     });
   }
   return globalClient;
@@ -26,35 +26,30 @@ function mapRows(data) {
   });
 }
 
-// Para compatibilidad con el código existente que espera una "conexión"
+/**
+ * Proporciona una "conexión" compatible con el código existente.
+ * Incluye el método batch() para transacciones atómicas en Turso.
+ */
 export async function getConnection() {
   const client = getLibsqlClient();
   
   return {
     execute: async (sql, params) => {
-      // Reemplazar sintaxis mysql por sqlite
-      let sqlReplaced = sql;
+      const data = await client.execute({ sql, args: params || [] });
       
-      const data = await client.execute({ sql: sqlReplaced, args: params || [] });
-      
-      // Si la consulta devolvió columnas, es un SELECT (incluso si hay 0 filas)
+      // Si la consulta devolvió columnas, es un SELECT
       if (data.columns && data.columns.length > 0) {
         return [mapRows(data), data.columns];
       }
       
       // Si no hay columnas pero sí rowsAffected, es un INSERT/UPDATE/DELETE
-      if (data.rowsAffected !== undefined) {
-        // Simular ResultSetHeader de mysql2
-        return [{
-          affectedRows: data.rowsAffected,
-          insertId: data.lastInsertRowid ? data.lastInsertRowid.toString() : null,
-          warningStatus: 0,
-          serverStatus: 2,
-          changedRows: data.rowsAffected
-        }, null];
-      }
-
-      return [[], []];
+      return [{
+        affectedRows: data.rowsAffected || 0,
+        insertId: data.lastInsertRowid ? data.lastInsertRowid.toString() : null,
+        warningStatus: 0,
+        serverStatus: 2,
+        changedRows: data.rowsAffected || 0
+      }, null];
     },
     query: async (sql, params) => {
       const data = await client.execute({ sql, args: params || [] });
@@ -62,6 +57,22 @@ export async function getConnection() {
         return [mapRows(data), data.columns];
       }
       return [[], []];
+    },
+    batch: async (statements) => {
+      // statements: [{ sql, args }]
+      const data = await client.batch(statements, "write");
+      return data.map(result => {
+        if (result.columns && result.columns.length > 0) {
+          return [mapRows(result), result.columns];
+        }
+        return [{
+          affectedRows: result.rowsAffected || 0,
+          insertId: result.lastInsertRowid ? result.lastInsertRowid.toString() : null,
+          warningStatus: 0,
+          serverStatus: 2,
+          changedRows: result.rowsAffected || 0
+        }, null];
+      });
     },
     destroy: () => {},
     release: () => {},
