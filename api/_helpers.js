@@ -30,7 +30,7 @@ export async function isDeviceRevoked(user) {
         let sql = `SELECT revoked, license_key FROM devices WHERE device_id = ? LIMIT 1`;
         let params = [user.deviceId];
         
-        connection = await getConnection();
+        connection = getConnection();
         const [rows] = await connection.execute(sql, params);
         
         if (!rows.length) {
@@ -59,7 +59,7 @@ export async function isDeviceRevoked(user) {
 export async function queryDB(sql, params) {
   let connection;
   try {
-    connection = await getConnection();
+    connection = getConnection();
     const [rows] = await connection.execute(sql, params || []);
     return rows;
   } catch (error) {
