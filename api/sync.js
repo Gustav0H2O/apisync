@@ -67,7 +67,7 @@ export default async function handler(req, res) {
                     catalog_show_product_description = ?, catalog_show_promos = ?, catalog_show_wholesale = ?,
                     catalog_footer_text = ?, catalog_grayscale_mode = ?,
                     updated_at = CURRENT_TIMESTAMP
-                  WHERE email = ?`,
+                  WHERE email = ? AND version <= ?`,
                 args: mapP([
                     profile.business_name, profile.slogan, profile.rif, profile.address, profile.user_name,
                     profile.user_phone, profile.accent_color, profile.header_color, profile.version,
@@ -83,7 +83,7 @@ export default async function handler(req, res) {
                     profile.catalog_show_slogan, profile.catalog_show_exchange_rate, profile.catalog_show_product_code,
                     profile.catalog_show_product_description, profile.catalog_show_promos, profile.catalog_show_wholesale,
                     profile.catalog_footer_text, profile.catalog_grayscale_mode,
-                    user.email
+                    user.email, profile.version
                 ])
             });
         }
