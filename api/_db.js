@@ -30,7 +30,7 @@ function mapRows(data) {
  * Proporciona una "conexión" compatible con el código existente.
  * Incluye el método batch() para transacciones atómicas en Turso.
  */
-export async function getConnection() {
+export function getConnection() {
   const client = getLibsqlClient();
   
   return {
