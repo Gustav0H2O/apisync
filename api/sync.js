@@ -397,8 +397,13 @@ export default async function handler(req, res) {
 
         // Procesar el perfil para convertir el logo Blob a Base64 para la transmisión de vuelta
         const profileResponse = profileRows[0] || null;
-        if (profileResponse && profileResponse.catalog_logo_path instanceof Buffer) {
-            profileResponse.catalog_logo_path = profileResponse.catalog_logo_path.toString('base64');
+        if (profileResponse && profileResponse.catalog_logo_path) {
+            const logo = profileResponse.catalog_logo_path;
+            if (logo instanceof Buffer) {
+                profileResponse.catalog_logo_path = logo.toString('base64');
+            } else if (logo && logo.type === 'Buffer' && logo.data) {
+                profileResponse.catalog_logo_path = Buffer.from(logo.data).toString('base64');
+            }
         }
 
         // ─── CERRAR CONEXIÓN ANTES DE RESPONDER ───────────────────────────
