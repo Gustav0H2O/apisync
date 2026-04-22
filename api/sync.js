@@ -24,18 +24,58 @@ import { verifyToken, isDeviceRevoked } from './_helpers.js';
  *  4. Hace PULL de todos los datos del usuario (incluyendo perfil)
  *  5. Cierra la conexión
  */
+import Busboy from 'busboy';
+
+/**
+ * POST /api/sync
+ * Soporta JSON tradicional y Multipart/Form-Data para Blobs.
+ */
 export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).end();
 
     const user = verifyToken(req);
     if (!user) return res.status(401).json({ error: 'No autorizado' });
     
-    // VERIFICAR ESTADO DEL DISPOSITIVO
     if (await isDeviceRevoked(user)) {
         return res.status(401).json({ error: 'DEVICE_REVOKED', message: 'Este dispositivo ha sido desvinculado' });
     }
 
-    const push = req.body.push || {};
+    let push = {};
+    let lastSync = null;
+    let catalogLogoBuffer = null;
+
+    // --- PROCESAR MULTIPART O JSON ---
+    const contentType = req.headers['content-type'] || '';
+    if (contentType.includes('multipart/form-data')) {
+        await new Promise((resolve, reject) => {
+            const bb = Busboy({ headers: req.headers });
+            bb.on('field', (name, val) => {
+                if (name === 'payload') {
+                    const payload = JSON.parse(val);
+                    push = payload.push || {};
+                    lastSync = payload.last_sync;
+                }
+            });
+            bb.on('file', (name, file, info) => {
+                if (name === 'catalog_logo') {
+                    const chunks = [];
+                    file.on('data', (data) => chunks.push(data));
+                    file.on('end', () => {
+                        catalogLogoBuffer = Buffer.concat(chunks);
+                    });
+                } else {
+                    file.resume();
+                }
+            });
+            bb.on('finish', resolve);
+            bb.on('error', reject);
+            req.pipe(bb);
+        });
+    } else {
+        push = req.body.push || {};
+        lastSync = req.body.last_sync;
+    }
+
     const { clients = [], invoices = [], profile = null, products = [], suppliers = [], categories = [], stock_movements = [] } = push;
 
     let connection;
@@ -76,7 +116,7 @@ export default async function handler(req, res) {
                     profile.show_banner_invoice, profile.show_banner_quote, profile.show_banner_delivery,
                     profile.banner_color, profile.show_exchange_rate, profile.config_style,
                     profile.products_by_stock || 0,
-                    profile.catalog_document_title, profile.catalog_layout_style, profile.catalog_logo_path,
+                    profile.catalog_document_title, profile.catalog_layout_style, catalogLogoBuffer || profile.catalog_logo_path,
                     profile.catalog_logo_position, profile.catalog_banner_color, profile.catalog_header_color,
                     profile.catalog_show_stock, profile.catalog_show_price_bs, profile.catalog_show_price_usd,
                     profile.catalog_show_iva, profile.catalog_show_address, profile.catalog_show_phone,
@@ -280,7 +320,7 @@ export default async function handler(req, res) {
         }
 
         // ─── FASE 3: PULL (devolver todo al dispositivo o solo los cambios desde last_sync) ───────
-        const lastSync = req.body.last_sync;
+        const lastSyncVal = lastSync || req.body.last_sync;
         let clientParams = [user.email];
         let invoiceParams = [user.email];
         let otherParams = [user.email];
@@ -292,8 +332,8 @@ export default async function handler(req, res) {
         let categorySql = `SELECT * FROM sync_categories WHERE account_email = ?`;
         let movementSql = `SELECT * FROM sync_stock_movements WHERE account_email = ?`;
 
-        if (lastSync) {
-            const syncDate = new Date(lastSync).toISOString().slice(0, 19).replace('T', ' ');
+        if (lastSyncVal) {
+            const syncDate = new Date(lastSyncVal).toISOString().slice(0, 19).replace('T', ' ');
             clientSql += ` AND (updated_at >= ? OR deleted_at >= ?)`;
             invoiceSql += ` AND (updated_at >= ? OR deleted_at >= ?)`;
             supplierSql += ` AND (updated_at >= ? OR deleted_at >= ?)`;
@@ -355,6 +395,12 @@ export default async function handler(req, res) {
             [user.email]
         );
 
+        // Procesar el perfil para convertir el logo Blob a Base64 para la transmisión de vuelta
+        const profileResponse = profileRows[0] || null;
+        if (profileResponse && profileResponse.catalog_logo_path instanceof Buffer) {
+            profileResponse.catalog_logo_path = profileResponse.catalog_logo_path.toString('base64');
+        }
+
         // ─── CERRAR CONEXIÓN ANTES DE RESPONDER ───────────────────────────
         connection.destroy();
 
@@ -365,7 +411,7 @@ export default async function handler(req, res) {
             products:   remoteProducts,
             categories: remoteCategories,
             stock_movements: remoteMovements,
-            profile:    profileRows[0] || null,
+            profile:    profileResponse,
         });
 
     } catch (e) {
