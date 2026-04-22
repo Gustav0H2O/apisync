@@ -41,7 +41,7 @@ export default async function handler(req, res) {
     let connection;
     try {
         // ─── ABRIR UNA SOLA CONEXIÓN ─────────────────────────────────────
-        connection = await getConnection();
+        connection = getConnection();
 
         // Función auxiliar para forzar undefined a null y evitar caídas en mysql2
         const mapP = (arr) => arr.map(v => v === undefined ? null : v);
@@ -272,6 +272,10 @@ export default async function handler(req, res) {
 
         // Ejecutar todo el PUSH en una sola transacción batch si hay algo que enviar
         if (batchStatements.length > 0) {
+            if (typeof connection.batch !== 'function') {
+                console.error('❌ [Sync Critical]: connection.batch no es una función. Métodos disponibles:', Object.keys(connection));
+                throw new Error('El driver de base de datos no soporta operaciones en lote (batch). Verifique api/_db.js');
+            }
             await connection.batch(batchStatements);
         }
 
