@@ -19,8 +19,8 @@ async function getLicensePolicy(licenseKey) {
             return { maxDevicesAllowed: DEFAULT_MAX_DEVICES, pairCooldownDays: DEFAULT_PAIR_COOLDOWN_DAYS };
         }
         return {
-            maxDevicesAllowed: Number(rows[0].max_devices_allowed || DEFAULT_MAX_DEVICES),
-            pairCooldownDays: Number(rows[0].pair_cooldown_days || DEFAULT_PAIR_COOLDOWN_DAYS),
+            maxDevicesAllowed: Number(rows[0].max_devices_allowed ?? DEFAULT_MAX_DEVICES),
+            pairCooldownDays: Number(rows[0].pair_cooldown_days ?? DEFAULT_PAIR_COOLDOWN_DAYS),
         };
     } catch (_) {
         return { maxDevicesAllowed: DEFAULT_MAX_DEVICES, pairCooldownDays: DEFAULT_PAIR_COOLDOWN_DAYS };
@@ -38,7 +38,7 @@ export default async function handler(req, res) {
 
     try {
         const policy = await getLicensePolicy(user.licenseKey);
-        const cooldownHours = Math.max(1, policy.pairCooldownDays) * 24;
+        const cooldownHours = policy.pairCooldownDays * 24;
 
         const activeCountRows = await queryDB(
             `SELECT COUNT(*) AS c FROM devices WHERE license_key = ? AND revoked = 0`,
