@@ -414,9 +414,11 @@ export default async function handler(req, res) {
 
         // PULL NOTIFICATIONS
         const [notifications] = await connection.execute(
-            `SELECT id, condition_key, condition_op, condition_val, message, title, type, show_once, created_at
-             FROM app_notifications 
-             WHERE (target_email IS NULL OR target_email = ?) AND is_active = 1`,
+            `SELECT * FROM app_notifications 
+             WHERE is_active = 1 
+             AND (target_email IS NULL OR target_email = ?)
+             AND (start_date IS NULL OR start_date <= CURRENT_TIMESTAMP)
+             AND (end_date IS NULL OR end_date >= CURRENT_TIMESTAMP)`,
             [user.email]
         );
 
