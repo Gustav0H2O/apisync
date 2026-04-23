@@ -21,8 +21,8 @@ async function getLicensePolicy(licenseKey) {
             return { maxDevicesAllowed: DEFAULT_MAX_DEVICES, pairCooldownDays: DEFAULT_PAIR_COOLDOWN_DAYS };
         }
         return {
-            maxDevicesAllowed: Number(rows[0].max_devices_allowed || DEFAULT_MAX_DEVICES),
-            pairCooldownDays: Number(rows[0].pair_cooldown_days || DEFAULT_PAIR_COOLDOWN_DAYS),
+            maxDevicesAllowed: Number(rows[0].max_devices_allowed ?? DEFAULT_MAX_DEVICES),
+            pairCooldownDays: Number(rows[0].pair_cooldown_days ?? DEFAULT_PAIR_COOLDOWN_DAYS),
         };
     } catch (_) {
         // Fallback para esquemas viejos donde no existan columnas nuevas.
@@ -59,7 +59,7 @@ export default async function handler(req, res) {
         }
 
         const policy = await getLicensePolicy(license_key);
-        const cooldownHours = Math.max(1, policy.pairCooldownDays) * 24;
+        const cooldownHours = policy.pairCooldownDays * 24;
 
         const knownDeviceRows = await queryDB(
             `SELECT device_id, revoked FROM devices WHERE device_id = ? AND license_key = ? LIMIT 1`,
