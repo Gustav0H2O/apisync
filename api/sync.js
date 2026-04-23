@@ -72,8 +72,8 @@ export default async function handler(req, res) {
             req.pipe(bb);
         });
     } else {
-        push = req.body.push || {};
-        lastSync = req.body.last_sync;
+        push = req.body?.push || {};
+        lastSync = req.body?.last_sync;
     }
 
     const { clients = [], invoices = [], profile = null, products = [], suppliers = [], categories = [], stock_movements = [] } = push;
@@ -326,7 +326,7 @@ export default async function handler(req, res) {
         }
 
         // ─── FASE 3: PULL (devolver todo al dispositivo o solo los cambios desde last_sync) ───────
-        const lastSyncVal = lastSync || req.body.last_sync;
+        const lastSyncVal = lastSync || req.body?.last_sync;
         let clientParams = [user.email];
         let invoiceParams = [user.email];
         let otherParams = [user.email];
