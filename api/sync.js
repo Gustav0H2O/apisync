@@ -99,7 +99,12 @@ export default async function handler(req, res) {
                     show_banner_invoice = ?, show_banner_quote = ?, show_banner_delivery = ?,
                     banner_color = ?, show_exchange_rate = ?, config_style = ?,
                     products_by_stock = ?, 
-                    catalog_document_title = ?, catalog_layout_style = ?, catalog_logo_path = ?,
+                    catalog_document_title = ?, catalog_layout_style = ?, 
+                    catalog_logo_path = CASE 
+                        WHEN ? = 1 THEN NULL 
+                        WHEN ? IS NOT NULL THEN ? 
+                        ELSE catalog_logo_path 
+                    END,
                     catalog_logo_position = ?, catalog_banner_color = ?, catalog_header_color = ?,
                     catalog_show_stock = ?, catalog_show_price_bs = ?, catalog_show_price_usd = ?,
                     catalog_show_iva = ?, catalog_show_address = ?, catalog_show_phone = ?,
@@ -116,7 +121,8 @@ export default async function handler(req, res) {
                     profile.show_banner_invoice, profile.show_banner_quote, profile.show_banner_delivery,
                     profile.banner_color, profile.show_exchange_rate, profile.config_style,
                     profile.products_by_stock || 0,
-                    profile.catalog_document_title, profile.catalog_layout_style, catalogLogoBuffer || profile.catalog_logo_path,
+                    profile.catalog_document_title, profile.catalog_layout_style,
+                    profile.clear_catalog_logo ? 1 : 0, catalogLogoBuffer, catalogLogoBuffer,
                     profile.catalog_logo_position, profile.catalog_banner_color, profile.catalog_header_color,
                     profile.catalog_show_stock, profile.catalog_show_price_bs, profile.catalog_show_price_usd,
                     profile.catalog_show_iva, profile.catalog_show_address, profile.catalog_show_phone,
@@ -406,6 +412,14 @@ export default async function handler(req, res) {
             }
         }
 
+        // PULL NOTIFICATIONS
+        const [notifications] = await connection.execute(
+            `SELECT id, condition_key, condition_op, condition_val, message, title, type, show_once, created_at
+             FROM app_notifications 
+             WHERE (target_email IS NULL OR target_email = ?) AND is_active = 1`,
+            [user.email]
+        );
+
         // ─── CERRAR CONEXIÓN ANTES DE RESPONDER ───────────────────────────
         connection.destroy();
 
@@ -417,6 +431,7 @@ export default async function handler(req, res) {
             categories: remoteCategories,
             stock_movements: remoteMovements,
             profile:    profileResponse,
+            notifications: notifications,
         });
 
     } catch (e) {
