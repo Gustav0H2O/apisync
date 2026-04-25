@@ -157,7 +157,9 @@ async function handleUnlink(req, res) {
         if (!rowToUnlink) return res.status(404).json({ error: 'No se encontró otro dispositivo activo para desvincular' });
         if (rowToUnlink.device_id === user.deviceId) return res.status(400).json({ error: 'No puedes desvincular el dispositivo actual' });
 
-        await queryDB(`UPDATE devices SET revoked = 1, last_seen = CURRENT_TIMESTAMP, revoked_at = CURRENT_TIMESTAMP WHERE license_key = ? AND device_id = ?`, [license_key, rowToUnlink.device_id]);
+        // Se eliminó 'revoked_at' ya que no existe en el esquema proporcionado. 
+        // Se usa 'last_seen' para registrar el momento de la desvinculación.
+        await queryDB(`UPDATE devices SET revoked = 1, last_seen = CURRENT_TIMESTAMP WHERE license_key = ? AND device_id = ?`, [license_key, rowToUnlink.device_id]);
         
         const policy = await getLicensePolicy(license_key);
         const [cooldown] = await queryDB(`SELECT datetime('now', '+' || ? || ' hours') AS cooldown_until`, [policy.pairCooldownDays * 24]);
