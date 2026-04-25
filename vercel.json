@@ -1,6 +1,7 @@
 {
   "version": 2,
   "rewrites": [
+    { "source": "/api/pairing/:action", "destination": "/api/pairing_router.js" },
     { "source": "/api/proxy", "destination": "/api/proxy.js" },
     { "source": "/api/auth/token", "destination": "/api/auth/token.js" },
     { "source": "/api/sync", "destination": "/api/sync/index.js" },
