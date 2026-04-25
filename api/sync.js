@@ -33,6 +33,11 @@ import Busboy from 'busboy';
 export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).end();
 
+    // Validación de tamaño de payload (10MB) para prevenir ataques DoS o payloads corruptos gigantes
+    if (req.headers['content-length'] && parseInt(req.headers['content-length']) > 10 * 1024 * 1024) {
+        return res.status(413).json({ error: 'Payload too large (> 10MB)' });
+    }
+
     const user = verifyToken(req);
     if (!user) return res.status(401).json({ error: 'No autorizado' });
     
@@ -177,8 +182,8 @@ export default async function handler(req, res) {
         for (const item of products) {
             batchStatements.push({
                 sql: `INSERT INTO sync_products 
-                    (uuid, account_email, code, name, description, unit, sale_price, is_exempt, supplier_uuid, stock, sales, category, wholesale_price, wholesale_quantity, is_on_sale, promo_price, promo_quantity, promo_start_date, promo_end_date, deleted_at, version, updated_at)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (uuid, account_email, code, name, description, unit, sale_price, is_exempt, supplier_uuid, stock, sales, category, wholesale_price, wholesale_quantity, is_on_sale, promo_price, promo_quantity, promo_start_date, promo_end_date, barcode, deleted_at, version, updated_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                   ON CONFLICT(uuid) DO UPDATE SET
                     code               = CASE WHEN excluded.version > sync_products.version THEN excluded.code ELSE sync_products.code END,
                     name               = CASE WHEN excluded.version > sync_products.version THEN excluded.name ELSE sync_products.name END,
@@ -197,6 +202,7 @@ export default async function handler(req, res) {
                     promo_quantity     = CASE WHEN excluded.version > sync_products.version THEN excluded.promo_quantity ELSE sync_products.promo_quantity END,
                     promo_start_date   = CASE WHEN excluded.version > sync_products.version THEN excluded.promo_start_date ELSE sync_products.promo_start_date END,
                     promo_end_date     = CASE WHEN excluded.version > sync_products.version THEN excluded.promo_end_date ELSE sync_products.promo_end_date END,
+                    barcode            = CASE WHEN excluded.version > sync_products.version THEN excluded.barcode ELSE sync_products.barcode END,
                     deleted_at         = CASE WHEN excluded.version > sync_products.version THEN excluded.deleted_at ELSE sync_products.deleted_at END,
                     updated_at         = CASE WHEN excluded.version > sync_products.version THEN excluded.updated_at ELSE sync_products.updated_at END,
                     version            = CASE WHEN excluded.version > sync_products.version THEN excluded.version ELSE sync_products.version END`,
@@ -204,7 +210,7 @@ export default async function handler(req, res) {
                     item.uuid, user.email, item.code, item.name, item.description, item.unit, item.sale_price, 
                     item.is_exempt, item.supplier_uuid, item.stock, item.sales, item.category, 
                     item.wholesale_price, item.wholesale_quantity, item.is_on_sale, item.promo_price,
-                    item.promo_quantity, item.promo_start_date, item.promo_end_date,
+                    item.promo_quantity, item.promo_start_date, item.promo_end_date, item.barcode,
                     item.deleted_at, item.version, item.updated_at
                 ])
             });
@@ -297,20 +303,21 @@ export default async function handler(req, res) {
                 for (const it of inv.items) {
                     batchStatements.push({
                         sql: `INSERT INTO sync_invoice_items 
-                            (uuid, invoice_uuid, code, description, quantity, unit_price, total_price, is_exempt, discount, deleted_at, version, updated_at)
-                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            (uuid, invoice_uuid, code, description, quantity, unit_price, total_price, is_exempt, product_uuid, discount, deleted_at, version, updated_at)
+                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                           ON CONFLICT(uuid) DO UPDATE SET 
-                             code        = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.code ELSE sync_invoice_items.code END,
-                             description = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.description ELSE sync_invoice_items.description END,
-                             quantity    = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.quantity ELSE sync_invoice_items.quantity END,
-                             unit_price  = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.unit_price ELSE sync_invoice_items.unit_price END,
-                             total_price = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.total_price ELSE sync_invoice_items.total_price END,
-                             is_exempt   = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.is_exempt ELSE sync_invoice_items.is_exempt END,
-                             discount    = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.discount ELSE sync_invoice_items.discount END,
-                             deleted_at  = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.deleted_at ELSE sync_invoice_items.deleted_at END,
-                             updated_at  = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.updated_at ELSE sync_invoice_items.updated_at END,
-                             version     = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.version ELSE sync_invoice_items.version END`,
-                        args: mapP([it.uuid, inv.uuid, it.code, it.description, it.quantity, it.unit_price, it.total_price, it.is_exempt, it.discount, it.deleted_at, it.version, it.updated_at])
+                             code         = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.code ELSE sync_invoice_items.code END,
+                             description  = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.description ELSE sync_invoice_items.description END,
+                             quantity     = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.quantity ELSE sync_invoice_items.quantity END,
+                             unit_price   = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.unit_price ELSE sync_invoice_items.unit_price END,
+                             total_price  = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.total_price ELSE sync_invoice_items.total_price END,
+                             is_exempt    = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.is_exempt ELSE sync_invoice_items.is_exempt END,
+                             product_uuid = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.product_uuid ELSE sync_invoice_items.product_uuid END,
+                             discount     = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.discount ELSE sync_invoice_items.discount END,
+                             deleted_at   = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.deleted_at ELSE sync_invoice_items.deleted_at END,
+                             updated_at   = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.updated_at ELSE sync_invoice_items.updated_at END,
+                             version      = CASE WHEN excluded.version > sync_invoice_items.version THEN excluded.version ELSE sync_invoice_items.version END`,
+                        args: mapP([it.uuid, inv.uuid, it.code, it.description, it.quantity, it.unit_price, it.total_price, it.is_exempt, it.product_uuid, it.discount, it.deleted_at, it.version, it.updated_at])
                     });
                 }
             }
@@ -352,12 +359,15 @@ export default async function handler(req, res) {
             otherParams.push(syncDate, syncDate);
         }
 
-        const [remoteClients] = await connection.execute(clientSql, clientParams);
-        const [remoteInvoices] = await connection.execute(invoiceSql, invoiceParams);
-        const [remoteSuppliers] = await connection.execute(supplierSql, otherParams.length > 1 ? [user.email, ...otherParams.slice(1)] : [user.email]);
-        const [remoteProducts] = await connection.execute(productSql, otherParams.length > 1 ? [user.email, ...otherParams.slice(1)] : [user.email]);
-        const [remoteCategories] = await connection.execute(categorySql, otherParams.length > 1 ? [user.email, ...otherParams.slice(1)] : [user.email]);
-        const [remoteMovements] = await connection.execute(movementSql, otherParams.length > 1 ? [user.email, ...otherParams.slice(1)] : [user.email]);
+        const queryParams = [user.email];
+        if (syncDate) queryParams.push(syncDate, syncDate);
+
+        const [remoteClients]    = await connection.execute(clientSql, queryParams);
+        const [remoteInvoices]   = await connection.execute(invoiceSql, queryParams);
+        const [remoteSuppliers]  = await connection.execute(supplierSql, queryParams);
+        const [remoteProducts]   = await connection.execute(productSql, queryParams);
+        const [remoteCategories] = await connection.execute(categorySql, queryParams);
+        const [remoteMovements]  = await connection.execute(movementSql, queryParams);
 
         // ─── OPTIMIZACIÓN N+1: Cargar todos los ítems de las facturas devueltas en UNA sola consulta ───
         if (remoteInvoices.length > 0) {
@@ -425,6 +435,10 @@ export default async function handler(req, res) {
         // ─── CERRAR CONEXIÓN ANTES DE RESPONDER ───────────────────────────
         connection.destroy();
 
+        // Calcular checksum de integridad (suma de versiones)
+        const allData = [...remoteClients, ...remoteInvoices, ...remoteSuppliers, ...remoteProducts, ...remoteCategories, ...remoteMovements];
+        const checksum = allData.reduce((acc, curr) => acc + (parseInt(curr.version) || 0), 0);
+
         return res.status(200).json({
             clients:    remoteClients,
             invoices:   remoteInvoices,
@@ -434,6 +448,7 @@ export default async function handler(req, res) {
             stock_movements: remoteMovements,
             profile:    profileResponse,
             notifications: notifications,
+            checksum:   checksum
         });
 
     } catch (e) {
