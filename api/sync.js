@@ -334,9 +334,7 @@ export default async function handler(req, res) {
 
         // ─── FASE 3: PULL (devolver todo al dispositivo o solo los cambios desde last_sync) ───────
         const lastSyncVal = lastSync || req.body?.last_sync;
-        let clientParams = [user.email];
-        let invoiceParams = [user.email];
-        let otherParams = [user.email];
+        let syncDate = null;
         
         let clientSql = `SELECT * FROM sync_clients WHERE account_email = ?`;
         let invoiceSql = `SELECT * FROM sync_invoices WHERE account_email = ?`;
@@ -346,17 +344,13 @@ export default async function handler(req, res) {
         let movementSql = `SELECT * FROM sync_stock_movements WHERE account_email = ?`;
 
         if (lastSyncVal) {
-            const syncDate = new Date(lastSyncVal).toISOString().slice(0, 19).replace('T', ' ');
+            syncDate = new Date(lastSyncVal).toISOString().slice(0, 19).replace('T', ' ');
             clientSql += ` AND (updated_at >= ? OR deleted_at >= ?)`;
             invoiceSql += ` AND (updated_at >= ? OR deleted_at >= ?)`;
             supplierSql += ` AND (updated_at >= ? OR deleted_at >= ?)`;
             productSql += ` AND (updated_at >= ? OR deleted_at >= ?)`;
             categorySql += ` AND (updated_at >= ? OR deleted_at >= ?)`;
             movementSql += ` AND (updated_at >= ? OR deleted_at >= ?)`;
-            
-            clientParams.push(syncDate, syncDate);
-            invoiceParams.push(syncDate, syncDate);
-            otherParams.push(syncDate, syncDate);
         }
 
         const queryParams = [user.email];
