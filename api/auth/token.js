@@ -23,7 +23,10 @@ async function getLicensePolicy(licenseKey) {
             maxDevicesAllowed: Number(rows[0].max_devices_allowed ?? DEFAULT_MAX_DEVICES),
             pairCooldownDays: Number(rows[0].pair_cooldown_days ?? DEFAULT_PAIR_COOLDOWN_DAYS),
         };
-    } catch (_) { return { maxDevicesAllowed: DEFAULT_MAX_DEVICES, pairCooldownDays: DEFAULT_PAIR_COOLDOWN_DAYS }; }
+    } catch (e) { 
+        console.warn('⚠️ [Policy Check] Error al obtener política, usando valores por defecto:', e.message);
+        return { maxDevicesAllowed: DEFAULT_MAX_DEVICES, pairCooldownDays: DEFAULT_PAIR_COOLDOWN_DAYS }; 
+    }
 }
 
 // --- HANDLERS VINCULACION (PAIRING) ---
@@ -37,10 +40,24 @@ async function handleGenerate(req, res) {
         const policy = await getLicensePolicy(user.licenseKey);
         const cooldownHours = policy.pairCooldownDays * 24;
         const [active] = await queryDB(`SELECT COUNT(*) AS c FROM devices WHERE license_key = ? AND revoked = 0`, [user.licenseKey]);
-        if (Number(active.c || 0) >= policy.maxDevicesAllowed) return res.status(403).json({ error: 'Límite de dispositivos alcanzado', max_devices_allowed: policy.maxDevicesAllowed, active_devices: Number(active.c) });
+        const activeCount = Number(active.c || 0);
+
+        if (activeCount >= policy.maxDevicesAllowed) {
+            return res.status(403).json({ 
+                error: 'Límite de dispositivos alcanzado', 
+                max_devices_allowed: policy.maxDevicesAllowed, 
+                active_devices: activeCount 
+            });
+        }
         
         const recentRevoked = await queryDB(`SELECT datetime(last_seen, '+' || ? || ' hours') AS cooldown_until FROM devices WHERE license_key = ? AND revoked = 1 AND (julianday('now') - julianday(last_seen)) * 24 < ? ORDER BY last_seen DESC LIMIT 1`, [cooldownHours, user.licenseKey, cooldownHours]);
-        if (recentRevoked.length) return res.status(429).json({ error: 'Debes esperar 2 días para vincular un nuevo dispositivo', code: 'PAIR_COOLDOWN', cooldown_until: recentRevoked[0].cooldown_until });
+        if (recentRevoked.length) {
+            return res.status(429).json({ 
+                error: `Debes esperar ${policy.pairCooldownDays} días para vincular un nuevo dispositivo`, 
+                code: 'PAIR_COOLDOWN', 
+                cooldown_until: recentRevoked[0].cooldown_until 
+            });
+        }
 
         await queryDB(`INSERT INTO pairing_sessions (session_id, secret, device_id_source, license_key, expires_at) VALUES (?, ?, ?, ?, datetime('now', '+5 minutes'))`, [sessionId, secret, user.deviceId, user.licenseKey]);
         return res.status(200).json({ session_id: sessionId, secret });
@@ -54,8 +71,14 @@ async function handleConfirm(req, res) {
         const rows = await queryDB(`SELECT license_key FROM pairing_sessions WHERE session_id = ? AND secret = ? AND confirmed = 0 AND expires_at > CURRENT_TIMESTAMP`, [session_id, secret]);
         if (!rows.length) return res.status(401).json({ error: 'Sesión inválida o expirada' });
         const licenseKey = rows[0].license_key;
+        
         const revoked = await queryDB(`SELECT revoked FROM devices WHERE device_id = ? AND license_key = ? AND revoked = 1 LIMIT 1`, [device_id, licenseKey]);
-        if (revoked.length) return res.status(403).json({ error: 'Este dispositivo ha sido revocado. Contacta al soporte técnico para reactivarlo.', code: 'DEVICE_REVOKED' });
+        if (revoked.length) {
+            return res.status(403).json({ 
+                error: 'Este dispositivo ha sido revocado. Contacta al soporte técnico para reactivarlo.', 
+                code: 'DEVICE_REVOKED' 
+            });
+        }
         
         await queryDB(`INSERT INTO devices (device_id, license_key, name, last_seen, paired_at, revoked) VALUES (?, ?, ?, datetime('now'), datetime('now'), 0) ON CONFLICT(device_id) DO UPDATE SET revoked = 0, license_key = excluded.license_key, name = excluded.name, last_seen = datetime('now')`, [device_id, licenseKey, device_name || 'Nuevo Dispositivo']);
         await queryDB(`UPDATE pairing_sessions SET confirmed = 1 WHERE session_id = ?`, [session_id]);
@@ -64,10 +87,12 @@ async function handleConfirm(req, res) {
 }
 
 async function handleStatus(req, res) {
+    const user = await verifyToken(req);
+    if (!user) return res.status(401).json({ error: 'No autorizado' });
     const { session_id } = req.query;
     if (!session_id) return res.status(400).json({ error: 'Falta session_id' });
     try {
-        const [session] = await queryDB(`SELECT confirmed FROM pairing_sessions WHERE session_id = ? LIMIT 1`, [session_id]);
+        const [session] = await queryDB(`SELECT confirmed FROM pairing_sessions WHERE session_id = ? AND device_id_source = ? LIMIT 1`, [session_id, user.deviceId]);
         if (!session) return res.status(404).json({ error: 'Sesión no encontrada' });
         return res.status(200).json({ confirmed: session.confirmed === 1 });
     } catch (e) { return res.status(500).json({ error: e.message }); }
@@ -78,9 +103,9 @@ async function handleLink(req, res) {
     if (!user) return res.status(401).json({ error: 'No autorizado' });
     const { target_device_id, name } = req.body;
     if (!target_device_id) return res.status(400).json({ error: 'Falta target_device_id' });
-    const maxDevices = (await getLicensePolicy(user.licenseKey)).maxDevicesAllowed;
+    const policy = await getLicensePolicy(user.licenseKey);
     const [active] = await queryDB(`SELECT COUNT(*) AS c FROM devices WHERE license_key = ? AND revoked = 0 AND device_id != ?`, [user.licenseKey, target_device_id]);
-    if (Number(active.c || 0) >= maxDevices) return res.status(403).json({ error: 'Límite de dispositivos alcanzado' });
+    if (Number(active.c || 0) >= policy.maxDevicesAllowed) return res.status(403).json({ error: 'Límite de dispositivos alcanzado' });
     await queryDB(`INSERT INTO devices (device_id, license_key, name, last_seen, paired_at, revoked) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0) ON CONFLICT(device_id) DO UPDATE SET license_key = excluded.license_key, revoked = 0, last_seen = CURRENT_TIMESTAMP`, [target_device_id, user.licenseKey, name || 'Dispositivo vinculado']);
     return res.status(200).json({ success: true });
 }
@@ -99,7 +124,13 @@ async function handleDevicesList(req, res) {
     try {
         const devices = await queryDB(`SELECT device_id, name, last_seen, COALESCE(paired_at, last_seen) AS paired_at, revoked FROM devices WHERE license_key = ? ORDER BY revoked ASC, paired_at ASC`, [user.licenseKey]);
         const policy = await getLicensePolicy(user.licenseKey);
-        return res.status(200).json({ devices, current_device_id: user.deviceId, max_devices_allowed: policy.maxDevicesAllowed, cooldown_days: policy.pairCooldownDays, active_count: devices.filter(d => d.revoked === 0).length });
+        return res.status(200).json({ 
+            devices, 
+            current_device_id: user.deviceId, 
+            max_devices_allowed: policy.maxDevicesAllowed, 
+            cooldown_days: policy.pairCooldownDays, 
+            active_count: devices.filter(d => d.revoked === 0).length 
+        });
     } catch (e) { return res.status(500).json({ error: e.message }); }
 }
 
@@ -127,7 +158,15 @@ async function handleUnlink(req, res) {
         if (rowToUnlink.device_id === user.deviceId) return res.status(400).json({ error: 'No puedes desvincular el dispositivo actual' });
 
         await queryDB(`UPDATE devices SET revoked = 1, last_seen = CURRENT_TIMESTAMP, revoked_at = CURRENT_TIMESTAMP WHERE license_key = ? AND device_id = ?`, [license_key, rowToUnlink.device_id]);
-        return res.status(200).json({ ok: true, unlinked_device_id: rowToUnlink.device_id });
+        
+        const policy = await getLicensePolicy(license_key);
+        const [cooldown] = await queryDB(`SELECT datetime('now', '+' || ? || ' hours') AS cooldown_until`, [policy.pairCooldownDays * 24]);
+
+        return res.status(200).json({ 
+            ok: true, 
+            unlinked_device_id: rowToUnlink.device_id,
+            cooldown_until: cooldown?.cooldown_until || null
+        });
     } catch (e) { return res.status(500).json({ error: e.message }); }
 }
 
@@ -137,8 +176,8 @@ async function handleRename(req, res) {
     const { device_id, name } = req.body;
     if (!device_id || !name) return res.status(400).json({ error: 'Faltan parámetros' });
     try {
-        await queryDB(`UPDATE devices SET name = ? WHERE device_id = ? AND license_key = ?`, [name, device_id, user.licenseKey]);
-        return res.status(200).json({ ok: true });
+        const result = await queryDB(`UPDATE devices SET name = ? WHERE device_id = ? AND license_key = ?`, [name, device_id, user.licenseKey]);
+        return res.status(200).json({ ok: true, message: 'Dispositivo renombrado exitosamente' });
     } catch (e) { return res.status(500).json({ error: e.message }); }
 }
 
@@ -155,10 +194,26 @@ async function handleToken(req, res) {
     const known = await queryDB(`SELECT revoked FROM devices WHERE device_id = ? AND license_key = ? LIMIT 1`, [device_id, license_key]);
     if (known.length && known[0].revoked === 1) return res.status(401).json({ error: 'DEVICE_REVOKED' });
 
+    const policy = await getLicensePolicy(license_key);
+
     if (!known.length) {
-        const policy = await getLicensePolicy(license_key);
+        const cooldownHours = policy.pairCooldownDays * 24;
         const [active] = await queryDB(`SELECT COUNT(*) AS c FROM devices WHERE license_key = ? AND revoked = 0`, [license_key]);
-        if (Number(active.c || 0) >= policy.maxDevicesAllowed) return res.status(403).json({ error: 'Límite de dispositivos alcanzado' });
+        const activeCount = Number(active.c || 0);
+
+        if (activeCount >= policy.maxDevicesAllowed) {
+            return res.status(403).json({ error: 'Límite de dispositivos alcanzado' });
+        }
+
+        const recentRevoked = await queryDB(`SELECT datetime(last_seen, '+' || ? || ' hours') AS cooldown_until FROM devices WHERE license_key = ? AND revoked = 1 AND (julianday('now') - julianday(last_seen)) * 24 < ? ORDER BY last_seen DESC LIMIT 1`, [cooldownHours, license_key, cooldownHours]);
+        if (recentRevoked.length) {
+            return res.status(429).json({ 
+                error: `Debes esperar ${policy.pairCooldownDays} días para vincular un nuevo dispositivo`, 
+                code: 'PAIR_COOLDOWN', 
+                cooldown_until: recentRevoked[0].cooldown_until 
+            });
+        }
+
         await queryDB(`INSERT INTO devices (device_id, license_key, name, last_seen, paired_at, revoked) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0)`, [device_id, license_key, name || 'Sin nombre']);
     } else {
         await queryDB(`UPDATE devices SET last_seen = CURRENT_TIMESTAMP WHERE device_id = ?`, [device_id]);
@@ -184,10 +239,14 @@ export default async function handler(req, res) {
             case 'unlink': return await handleUnlink(req, res);
             case 'rename': return await handleRename(req, res);
             case 'count': 
-                const user = await verifyToken(req);
-                if (!user) return res.status(401).json({ error: 'No autorizado' });
-                const [c] = await queryDB(`SELECT COUNT(*) as count FROM devices WHERE license_key = ? AND revoked = 0`, [user.licenseKey]);
-                return res.status(200).json({ count: c.count });
+                const userCount = await verifyToken(req);
+                if (!userCount) return res.status(401).json({ error: 'No autorizado' });
+                const [c] = await queryDB(`SELECT COUNT(*) as count FROM devices WHERE license_key = ? AND revoked = 0`, [userCount.licenseKey]);
+                const policyCount = await getLicensePolicy(userCount.licenseKey);
+                return res.status(200).json({ 
+                    count: Number(c.count || 0),
+                    max_devices_allowed: policyCount.maxDevicesAllowed
+                });
             default:
                 return res.status(404).json({ error: `Acción '${currentAction}' no soportada.` });
         }
