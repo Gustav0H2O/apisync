@@ -441,7 +441,7 @@ export default async function handler(req, res) {
             [user.email, user.email, user.email, user.email, user.email, user.email, user.email]
         );
 
-        const globalChecksum = parseInt(checksumResults?.global_checksum || 0);
+        const globalChecksum = parseInt(checksumResults[0]?.global_checksum || 0);
 
         // ─── CERRAR CONEXIÓN ANTES DE RESPONDER ───────────────────────────
         connection.destroy();
