@@ -83,7 +83,8 @@ export function getConnection() {
     },
     destroy: () => {},
     release: () => {},
-    end: () => {}
+    end: () => {},
+    close: () => {}
   };
 }
 
