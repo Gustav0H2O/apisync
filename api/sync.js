@@ -426,12 +426,25 @@ export default async function handler(req, res) {
             [user.email]
         );
 
+        // ─── FASE 4: CHECKSUM GLOBAL (Suma de versiones de TODO lo que el usuario tiene en la nube) ───
+        // Esto permite que el dispositivo detecte si le falta algo (incluso registros viejos) y fuerce re-sync.
+        const [checksumResults] = await connection.execute(`
+            SELECT (
+                (SELECT COALESCE(SUM(version), 0) FROM sync_clients WHERE account_email = ?) + 
+                (SELECT COALESCE(SUM(version), 0) FROM sync_invoices WHERE account_email = ?) + 
+                (SELECT COALESCE(SUM(version), 0) FROM sync_invoice_items WHERE invoice_uuid IN (SELECT uuid FROM sync_invoices WHERE account_email = ?)) + 
+                (SELECT COALESCE(SUM(version), 0) FROM sync_suppliers WHERE account_email = ?) + 
+                (SELECT COALESCE(SUM(version), 0) FROM sync_products WHERE account_email = ?) + 
+                (SELECT COALESCE(SUM(version), 0) FROM sync_categories WHERE account_email = ?) + 
+                (SELECT COALESCE(SUM(version), 0) FROM sync_stock_movements WHERE account_email = ?)
+            ) as global_checksum`, 
+            [user.email, user.email, user.email, user.email, user.email, user.email, user.email]
+        );
+
+        const globalChecksum = parseInt(checksumResults?.global_checksum || 0);
+
         // ─── CERRAR CONEXIÓN ANTES DE RESPONDER ───────────────────────────
         connection.destroy();
-
-        // Calcular checksum de integridad (suma de versiones)
-        const allData = [...remoteClients, ...remoteInvoices, ...remoteSuppliers, ...remoteProducts, ...remoteCategories, ...remoteMovements];
-        const checksum = allData.reduce((acc, curr) => acc + (parseInt(curr.version) || 0), 0);
 
         return res.status(200).json({
             clients:    remoteClients,
@@ -442,7 +455,7 @@ export default async function handler(req, res) {
             stock_movements: remoteMovements,
             profile:    profileResponse,
             notifications: notifications,
-            checksum:   checksum
+            checksum:   globalChecksum
         });
 
     } catch (e) {
