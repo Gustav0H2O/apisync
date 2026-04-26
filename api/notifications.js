@@ -16,7 +16,7 @@ export default async function handler(req, res) {
     }
 
     try {
-        const connection = await getConnection();
+        const connection = getConnection();
 
         const [notifications] = await connection.execute(
             `SELECT * FROM app_notifications 
@@ -27,7 +27,11 @@ export default async function handler(req, res) {
             [user.email]
         );
 
-        await connection.close();
+        if (typeof connection.end === 'function') {
+            await connection.end();
+        } else if (typeof connection.destroy === 'function') {
+            connection.destroy();
+        }
 
         return res.status(200).json({ 
             success: true,
