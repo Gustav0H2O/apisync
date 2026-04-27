@@ -95,6 +95,7 @@ export default async function handler(req, res) {
 
         // ─── FASE 0: PUSH PROFILE ────────────────────────────────────────
         if (profile) {
+            // Verificar si el usuario aún tiene cambios disponibles
             batchStatements.push({
                 sql: `UPDATE clientes SET 
                     business_name = ?, slogan = ?, rif = ?, address = ?, user_name = ?,
@@ -116,8 +117,10 @@ export default async function handler(req, res) {
                     catalog_show_slogan = ?, catalog_show_exchange_rate = ?, catalog_show_product_code = ?,
                     catalog_show_product_description = ?, catalog_show_promos = ?, catalog_show_wholesale = ?,
                     catalog_footer_text = ?, catalog_grayscale_mode = ?,
+                    profile_change_count = MIN(COALESCE(profile_change_limit, 3), COALESCE(profile_change_count, 0) + 1),
                     updated_at = CURRENT_TIMESTAMP
-                  WHERE email = ? AND version <= ?`,
+                  WHERE email = ? AND version <= ?
+                  AND COALESCE(profile_change_count, 0) < COALESCE(profile_change_limit, 3)`,
                 args: mapP([
                     profile.business_name, profile.slogan, profile.rif, profile.address, profile.user_name,
                     profile.user_phone, profile.accent_color, profile.header_color, profile.version,
@@ -407,6 +410,8 @@ export default async function handler(req, res) {
                     catalog_show_slogan, catalog_show_exchange_rate, catalog_show_product_code,
                     catalog_show_product_description, catalog_show_promos, catalog_show_wholesale,
                     catalog_footer_text, catalog_grayscale_mode,
+                    COALESCE(profile_change_limit, 3) as profile_change_limit,
+                    COALESCE(profile_change_count, 0) as profile_change_count,
                     version, updated_at 
              FROM clientes WHERE email = ? LIMIT 1`,
             [user.email]
