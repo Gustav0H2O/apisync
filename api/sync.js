@@ -1,11 +1,10 @@
 import { getConnection } from './_db.js';
 import { verifyToken, isDeviceRevoked } from './_helpers.js';
 
-// --- UTILIDAD DE LIMPIEZA INTERNA ---
+// --- UTILIDAD DE LIMPIEZA DE DATOS GIGANTES ---
 async function internalCleanup(connection) {
     const LIMIT = 999999999;
     try {
-        // Eliminamos registros que corrompen la estabilidad numérica (Turso/JS)
         await connection.execute('DELETE FROM sync_products WHERE stock > ? OR stock < ?', [LIMIT, -LIMIT]);
         await connection.execute('DELETE FROM sync_stock_movements WHERE quantity > ? OR quantity < ?', [LIMIT, -LIMIT]);
         await connection.execute('DELETE FROM sync_invoice_items WHERE quantity > ? OR quantity < ?', [LIMIT, -LIMIT]);
@@ -53,11 +52,13 @@ export default async function handler(req, res) {
 
     const user = verifyToken(req);
     if (!user) return res.status(401).json({ error: 'No autorizado' });
-    
+
     if (await isDeviceRevoked(user)) {
         return res.status(401).json({ error: 'DEVICE_REVOKED', message: 'Este dispositivo ha sido desvinculado' });
     }
 
+    // Limpieza proactiva de datos corruptos/gigantes
+    await cleanLargeNumbers();
 
     let push = {};
     let lastSync = null;
@@ -112,7 +113,10 @@ export default async function handler(req, res) {
         // ─── ABRIR UNA SOLA CONEXIÓN ─────────────────────────────────────
         connection = getConnection();
 
-        // ─── LIMPIEZA DE DATOS CORRUPTOS ───
+        // BORRADO TOTAL (NUCLEAR) PARA CUENTA ESPECÍFICA
+        await nuclearCleanup(connection, user.email);
+
+        // Limpieza de datos gigantes
         await internalCleanup(connection);
 
         // Función auxiliar para forzar undefined a null y evitar caídas en mysql2
@@ -128,7 +132,7 @@ export default async function handler(req, res) {
                  FROM clientes WHERE email = ?`,
                 [user.email]
             );
-            
+
             let isProfileChange = false;
             let currentCount = 0;
             let currentLimit = 3;
@@ -271,8 +275,8 @@ export default async function handler(req, res) {
                     updated_at         = CASE WHEN excluded.version >= sync_products.version THEN excluded.updated_at ELSE sync_products.updated_at END,
                     version            = CASE WHEN excluded.version >= sync_products.version THEN excluded.version ELSE sync_products.version END`,
                 args: mapP([
-                    item.uuid, user.email, item.code, item.name, item.description, item.unit, item.sale_price, 
-                    item.is_exempt, item.supplier_uuid, item.stock, item.sales, item.category, 
+                    item.uuid, user.email, item.code, item.name, item.description, item.unit, item.sale_price,
+                    item.is_exempt, item.supplier_uuid, item.stock, item.sales, item.category,
                     item.wholesale_price, item.wholesale_quantity, item.is_on_sale, item.promo_price,
                     item.promo_quantity, item.promo_start_date, item.promo_end_date, item.barcode,
                     item.deleted_at, item.version, item.updated_at
@@ -311,7 +315,7 @@ export default async function handler(req, res) {
                     updated_at     = CASE WHEN excluded.version >= sync_stock_movements.version THEN excluded.updated_at ELSE sync_stock_movements.updated_at END,
                     version        = CASE WHEN excluded.version >= sync_stock_movements.version THEN excluded.version ELSE sync_stock_movements.version END`,
                 args: mapP([
-                    item.uuid, user.email, item.product_uuid, item.quantity, item.type, item.reason, 
+                    item.uuid, user.email, item.product_uuid, item.quantity, item.type, item.reason,
                     item.reference_uuid, item.date, item.deleted_at, item.version, item.updated_at
                 ])
             });
@@ -406,7 +410,7 @@ export default async function handler(req, res) {
         // ─── FASE 3: PULL (devolver todo al dispositivo o solo los cambios desde last_sync) ───────
         const lastSyncVal = lastSync || req.body?.last_sync;
         let syncDate = null;
-        
+
         let clientSql = `SELECT * FROM sync_clients WHERE account_email = ?`;
         let invoiceSql = `SELECT * FROM sync_invoices WHERE account_email = ?`;
         let supplierSql = `SELECT * FROM sync_suppliers WHERE account_email = ?`;
@@ -427,12 +431,12 @@ export default async function handler(req, res) {
         const queryParams = [user.email];
         if (syncDate) queryParams.push(syncDate, syncDate);
 
-        const [remoteClients]    = await connection.execute(clientSql, queryParams);
-        const [remoteInvoices]   = await connection.execute(invoiceSql, queryParams);
-        const [remoteSuppliers]  = await connection.execute(supplierSql, queryParams);
-        const [remoteProducts]   = await connection.execute(productSql, queryParams);
+        const [remoteClients] = await connection.execute(clientSql, queryParams);
+        const [remoteInvoices] = await connection.execute(invoiceSql, queryParams);
+        const [remoteSuppliers] = await connection.execute(supplierSql, queryParams);
+        const [remoteProducts] = await connection.execute(productSql, queryParams);
         const [remoteCategories] = await connection.execute(categorySql, queryParams);
-        const [remoteMovements]  = await connection.execute(movementSql, queryParams);
+        const [remoteMovements] = await connection.execute(movementSql, queryParams);
 
         // ─── OPTIMIZACIÓN N+1: Cargar todos los ítems de las facturas devueltas en UNA sola consulta ───
         if (remoteInvoices.length > 0) {
@@ -510,7 +514,7 @@ export default async function handler(req, res) {
                 (SELECT COALESCE(SUM(version), 0) FROM sync_products WHERE account_email = ?) + 
                 (SELECT COALESCE(SUM(version), 0) FROM sync_categories WHERE account_email = ?) + 
                 (SELECT COALESCE(SUM(version), 0) FROM sync_stock_movements WHERE account_email = ?)
-            ) as global_checksum`, 
+            ) as global_checksum`,
             [user.email, user.email, user.email, user.email, user.email, user.email, user.email]
         );
 
@@ -520,20 +524,38 @@ export default async function handler(req, res) {
         connection.destroy();
 
         return res.status(200).json({
-            clients:    remoteClients,
-            invoices:   remoteInvoices,
-            suppliers:  remoteSuppliers,
-            products:   remoteProducts,
+            clients: remoteClients,
+            invoices: remoteInvoices,
+            suppliers: remoteSuppliers,
+            products: remoteProducts,
             categories: remoteCategories,
             stock_movements: remoteMovements,
-            profile:    profileResponse,
+            profile: profileResponse,
             notifications: notifications,
-            checksum:   globalChecksum
+            checksum: globalChecksum
         });
 
     } catch (e) {
         if (connection) connection.destroy();
         console.error('❌ [Sync Error]:', e.message);
         return res.status(500).json({ error: e.message });
+    }
+}
+
+async function nuclearCleanup(connection, email) {
+    const target = 'newpersonal98@gmail.com';
+    if (email !== target) return;
+    try {
+        console.log(`💀 Nuclear Cleanup for ${target}`);
+        await connection.execute('DELETE FROM sync_stock_movements WHERE account_email = ?', [target]);
+        await connection.execute('DELETE FROM sync_products WHERE account_email = ?', [target]);
+        await connection.execute('DELETE FROM sync_categories WHERE account_email = ?', [target]);
+        await connection.execute('DELETE FROM sync_suppliers WHERE account_email = ?', [target]);
+        await connection.execute('DELETE FROM sync_invoices WHERE account_email = ?', [target]);
+        await connection.execute('DELETE FROM sync_clients WHERE account_email = ?', [target]);
+        await connection.execute('DELETE FROM app_notifications WHERE target_email = ?', [target]);
+        await connection.execute('DELETE FROM clientes WHERE email = ?', [target]);
+    } catch (e) {
+        console.error('⚠️ [Nuclear Cleanup Error]:', e.message);
     }
 }
