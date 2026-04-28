@@ -95,7 +95,41 @@ export default async function handler(req, res) {
 
         // ─── FASE 0: PUSH PROFILE ────────────────────────────────────────
         if (profile) {
-            // Verificar si el usuario aún tiene cambios disponibles
+            // 1. Obtener perfil actual para comparar
+            const [rows] = await connection.execute(
+                `SELECT business_name, slogan, rif, address, user_name, user_phone, profile_change_count, profile_change_limit 
+                 FROM clientes WHERE email = ?`,
+                [user.email]
+            );
+            
+            let isProfileChange = false;
+            let currentCount = 0;
+            let currentLimit = 3;
+
+            if (rows.length > 0) {
+                const currentProfile = rows[0];
+                currentCount = currentProfile.profile_change_count || 0;
+                currentLimit = currentProfile.profile_change_limit !== null ? currentProfile.profile_change_limit : 3;
+
+                if (
+                    (currentProfile.business_name || '') !== (profile.business_name || '') ||
+                    (currentProfile.slogan || '') !== (profile.slogan || '') ||
+                    (currentProfile.rif || '') !== (profile.rif || '') ||
+                    (currentProfile.address || '') !== (profile.address || '') ||
+                    (currentProfile.user_name || '') !== (profile.user_name || '') ||
+                    (currentProfile.user_phone || '') !== (profile.user_phone || '')
+                ) {
+                    isProfileChange = true;
+                }
+            } else {
+                isProfileChange = true; // Si no existe (raro), se toma como cambio
+            }
+
+            if (isProfileChange && currentCount >= currentLimit) {
+                // Si intenta cambiar campos de perfil y ya alcanzó el límite, rechazamos
+                throw new Error("Límite de cambios de perfil alcanzado. Sincronización rechazada.");
+            }
+
             batchStatements.push({
                 sql: `UPDATE clientes SET 
                     business_name = ?, slogan = ?, rif = ?, address = ?, user_name = ?,
@@ -117,10 +151,9 @@ export default async function handler(req, res) {
                     catalog_show_slogan = ?, catalog_show_exchange_rate = ?, catalog_show_product_code = ?,
                     catalog_show_product_description = ?, catalog_show_promos = ?, catalog_show_wholesale = ?,
                     catalog_footer_text = ?, catalog_grayscale_mode = ?,
-                    profile_change_count = MIN(COALESCE(profile_change_limit, 3), COALESCE(profile_change_count, 0) + 1),
+                    profile_change_count = ?,
                     updated_at = CURRENT_TIMESTAMP
-                  WHERE email = ? AND version <= ?
-                  AND COALESCE(profile_change_count, 0) < COALESCE(profile_change_limit, 3)`,
+                  WHERE email = ? AND version <= ?`,
                 args: mapP([
                     profile.business_name, profile.slogan, profile.rif, profile.address, profile.user_name,
                     profile.user_phone, profile.accent_color, profile.header_color, profile.version,
@@ -137,6 +170,7 @@ export default async function handler(req, res) {
                     profile.catalog_show_slogan, profile.catalog_show_exchange_rate, profile.catalog_show_product_code,
                     profile.catalog_show_product_description, profile.catalog_show_promos, profile.catalog_show_wholesale,
                     profile.catalog_footer_text, profile.catalog_grayscale_mode,
+                    isProfileChange ? currentCount + 1 : currentCount,
                     user.email, profile.version
                 ])
             });
