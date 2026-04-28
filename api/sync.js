@@ -6,9 +6,9 @@ async function internalCleanup(connection) {
     const LIMIT = 999999999;
     try {
         // Eliminamos registros que corrompen la estabilidad numérica (Turso/JS)
-        await connection.execute('DELETE FROM products WHERE stock > ? OR stock < ?', [LIMIT, -LIMIT]);
-        await connection.execute('DELETE FROM stock_movements WHERE quantity > ? OR quantity < ?', [LIMIT, -LIMIT]);
-        await connection.execute('DELETE FROM invoice_items WHERE quantity > ? OR quantity < ?', [LIMIT, -LIMIT]);
+        await connection.execute('DELETE FROM sync_products WHERE stock > ? OR stock < ?', [LIMIT, -LIMIT]);
+        await connection.execute('DELETE FROM sync_stock_movements WHERE quantity > ? OR quantity < ?', [LIMIT, -LIMIT]);
+        await connection.execute('DELETE FROM sync_invoice_items WHERE quantity > ? OR quantity < ?', [LIMIT, -LIMIT]);
     } catch (e) {
         console.error('⚠️ [Sync Cleanup Error]:', e.message);
     }
