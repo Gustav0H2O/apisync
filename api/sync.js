@@ -1,5 +1,5 @@
 import { getConnection } from './_db.js';
-import { verifyToken, isDeviceRevoked, cleanLargeNumbers } from './_helpers.js';
+import { verifyToken, isDeviceRevoked } from './_helpers.js';
 
 /**
  * POST /api/sync
@@ -45,8 +45,6 @@ export default async function handler(req, res) {
         return res.status(401).json({ error: 'DEVICE_REVOKED', message: 'Este dispositivo ha sido desvinculado' });
     }
 
-    // Limpieza proactiva de datos corruptos/gigantes
-    await cleanLargeNumbers();
 
     let push = {};
     let lastSync = null;
