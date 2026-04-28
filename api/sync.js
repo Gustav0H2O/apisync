@@ -1,17 +1,5 @@
 import { getConnection } from './_db.js';
-import { verifyToken, isDeviceRevoked } from './_helpers.js';
-
-// --- UTILIDAD DE LIMPIEZA DE DATOS GIGANTES ---
-async function internalCleanup(connection) {
-    const LIMIT = 999999999;
-    try {
-        await connection.execute('DELETE FROM sync_products WHERE stock > ? OR stock < ?', [LIMIT, -LIMIT]);
-        await connection.execute('DELETE FROM sync_stock_movements WHERE quantity > ? OR quantity < ?', [LIMIT, -LIMIT]);
-        await connection.execute('DELETE FROM sync_invoice_items WHERE quantity > ? OR quantity < ?', [LIMIT, -LIMIT]);
-    } catch (e) {
-        console.error('⚠️ [Sync Cleanup Error]:', e.message);
-    }
-}
+import { verifyToken, isDeviceRevoked, cleanLargeNumbers } from './_helpers.js';
 
 /**
  * POST /api/sync
@@ -112,12 +100,6 @@ export default async function handler(req, res) {
     try {
         // ─── ABRIR UNA SOLA CONEXIÓN ─────────────────────────────────────
         connection = getConnection();
-
-        // BORRADO TOTAL (NUCLEAR) PARA CUENTA ESPECÍFICA
-        await nuclearCleanup(connection, user.email);
-
-        // Limpieza de datos gigantes
-        await internalCleanup(connection);
 
         // Función auxiliar para forzar undefined a null y evitar caídas en mysql2
         const mapP = (arr) => arr.map(v => v === undefined ? null : v);
@@ -539,23 +521,5 @@ export default async function handler(req, res) {
         if (connection) connection.destroy();
         console.error('❌ [Sync Error]:', e.message);
         return res.status(500).json({ error: e.message });
-    }
-}
-
-async function nuclearCleanup(connection, email) {
-    const target = 'newpersonal98@gmail.com';
-    if (email !== target) return;
-    try {
-        console.log(`💀 Nuclear Cleanup for ${target}`);
-        await connection.execute('DELETE FROM sync_stock_movements WHERE account_email = ?', [target]);
-        await connection.execute('DELETE FROM sync_products WHERE account_email = ?', [target]);
-        await connection.execute('DELETE FROM sync_categories WHERE account_email = ?', [target]);
-        await connection.execute('DELETE FROM sync_suppliers WHERE account_email = ?', [target]);
-        await connection.execute('DELETE FROM sync_invoices WHERE account_email = ?', [target]);
-        await connection.execute('DELETE FROM sync_clients WHERE account_email = ?', [target]);
-        await connection.execute('DELETE FROM app_notifications WHERE target_email = ?', [target]);
-        await connection.execute('DELETE FROM clientes WHERE email = ?', [target]);
-    } catch (e) {
-        console.error('⚠️ [Nuclear Cleanup Error]:', e.message);
     }
 }
