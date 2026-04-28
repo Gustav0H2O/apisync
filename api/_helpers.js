@@ -71,16 +71,3 @@ export async function queryDB(sql, params) {
     }
   }
 }
-export async function cleanLargeNumbers() {
-    const conn = getConnection();
-    const LIMIT = 999999999;
-    try {
-        await conn.execute('DELETE FROM products WHERE stock > ? OR stock < ?', [LIMIT, -LIMIT]);
-        await conn.execute('DELETE FROM stock_movements WHERE quantity > ? OR quantity < ?', [LIMIT, -LIMIT]);
-        await conn.execute('DELETE FROM invoice_items WHERE quantity > ? OR quantity < ?', [LIMIT, -LIMIT]);
-    } catch (e) {
-        console.error('❌ [Cleanup Error]:', e.message);
-    } finally {
-        if (conn) conn.close();
-    }
-}
