@@ -1,5 +1,18 @@
 import { getConnection } from './_db.js';
-import { verifyToken, isDeviceRevoked, cleanLargeNumbers } from './_helpers.js';
+import { verifyToken, isDeviceRevoked } from './_helpers.js';
+
+// --- UTILIDAD DE LIMPIEZA INTERNA ---
+async function internalCleanup(connection) {
+    const LIMIT = 999999999;
+    try {
+        // Eliminamos registros que corrompen la estabilidad numérica (Turso/JS)
+        await connection.execute('DELETE FROM products WHERE stock > ? OR stock < ?', [LIMIT, -LIMIT]);
+        await connection.execute('DELETE FROM stock_movements WHERE quantity > ? OR quantity < ?', [LIMIT, -LIMIT]);
+        await connection.execute('DELETE FROM invoice_items WHERE quantity > ? OR quantity < ?', [LIMIT, -LIMIT]);
+    } catch (e) {
+        console.error('⚠️ [Sync Cleanup Error]:', e.message);
+    }
+}
 
 /**
  * POST /api/sync
@@ -45,8 +58,6 @@ export default async function handler(req, res) {
         return res.status(401).json({ error: 'DEVICE_REVOKED', message: 'Este dispositivo ha sido desvinculado' });
     }
 
-    // Limpieza proactiva de datos corruptos/gigantes
-    await cleanLargeNumbers();
 
     let push = {};
     let lastSync = null;
@@ -100,6 +111,9 @@ export default async function handler(req, res) {
     try {
         // ─── ABRIR UNA SOLA CONEXIÓN ─────────────────────────────────────
         connection = getConnection();
+
+        // ─── LIMPIEZA DE DATOS CORRUPTOS ───
+        await internalCleanup(connection);
 
         // Función auxiliar para forzar undefined a null y evitar caídas en mysql2
         const mapP = (arr) => arr.map(v => v === undefined ? null : v);
