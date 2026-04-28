@@ -1,5 +1,5 @@
 import { getConnection } from './_db.js';
-import { verifyToken, isDeviceRevoked } from './_helpers.js';
+import { verifyToken, isDeviceRevoked, cleanLargeNumbers } from './_helpers.js';
 
 /**
  * POST /api/sync
@@ -45,6 +45,9 @@ export default async function handler(req, res) {
         return res.status(401).json({ error: 'DEVICE_REVOKED', message: 'Este dispositivo ha sido desvinculado' });
     }
 
+    // Limpieza proactiva de datos corruptos/gigantes
+    await cleanLargeNumbers();
+
     let push = {};
     let lastSync = null;
     let catalogLogoBuffer = null;
@@ -82,6 +85,16 @@ export default async function handler(req, res) {
     }
 
     const { clients = [], invoices = [], profile = null, products = [], suppliers = [], categories = [], stock_movements = [] } = push;
+
+    // --- SANITIZACIÓN DE DATOS ENTRANTES (PUSH) ---
+    const MAX_SAFE = 999999999;
+    products.forEach(p => { if (p.stock > MAX_SAFE) p.stock = MAX_SAFE; if (p.stock < -MAX_SAFE) p.stock = -MAX_SAFE; });
+    stock_movements.forEach(m => { if (m.quantity > MAX_SAFE) m.quantity = MAX_SAFE; if (m.quantity < -MAX_SAFE) m.quantity = -MAX_SAFE; });
+    invoices.forEach(inv => {
+        if (inv.items && Array.isArray(inv.items)) {
+            inv.items.forEach(it => { if (it.quantity > MAX_SAFE) it.quantity = MAX_SAFE; if (it.quantity < -MAX_SAFE) it.quantity = -MAX_SAFE; });
+        }
+    });
 
     let connection;
     try {
