@@ -299,11 +299,11 @@ export default async function handler(req, res) {
                     (uuid, account_email, type, data, deleted_at, version, updated_at)
                   VALUES (?, ?, ?, ?, ?, ?, ?)
                   ON CONFLICT(uuid) DO UPDATE SET
-                    type           = CASE WHEN excluded.version >= sync_drafts.version THEN excluded.type ELSE sync_drafts.type END,
-                    data           = CASE WHEN excluded.version >= sync_drafts.version THEN excluded.data ELSE sync_drafts.data END,
-                    deleted_at     = CASE WHEN excluded.version >= sync_drafts.version THEN excluded.deleted_at ELSE sync_drafts.deleted_at END,
-                    updated_at     = CASE WHEN excluded.version >= sync_drafts.version THEN excluded.updated_at ELSE sync_drafts.updated_at END,
-                    version        = CASE WHEN excluded.version >= sync_drafts.version THEN excluded.version ELSE sync_drafts.version END`,
+                    type           = CASE WHEN excluded.version >= COALESCE(sync_drafts.version, 0) THEN excluded.type ELSE sync_drafts.type END,
+                    data           = CASE WHEN excluded.version >= COALESCE(sync_drafts.version, 0) THEN excluded.data ELSE sync_drafts.data END,
+                    deleted_at     = CASE WHEN excluded.version >= COALESCE(sync_drafts.version, 0) THEN excluded.deleted_at ELSE sync_drafts.deleted_at END,
+                    updated_at     = CASE WHEN excluded.version >= COALESCE(sync_drafts.version, 0) THEN excluded.updated_at ELSE sync_drafts.updated_at END,
+                    version        = CASE WHEN excluded.version >= COALESCE(sync_drafts.version, 0) THEN excluded.version ELSE sync_drafts.version END`,
                 args: mapP([
                     item.uuid, user.email, item.type, item.data, item.deleted_at, item.version, item.updated_at
                 ])
