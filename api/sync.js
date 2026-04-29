@@ -314,8 +314,8 @@ export default async function handler(req, res) {
         for (const inv of invoices) {
             batchStatements.push({
                 sql: `INSERT INTO sync_invoices 
-                    (uuid, account_email, number, client_uuid, client_name, client_address, client_rif, client_phone, iva_enabled, payment_method, due_date, budget, order_code, transport, salesperson, delivery_method, ship_to, observations, subtotal, tax, total, discount_amount, discount_percentage, exchange_rate, currency_symbol, working_currency, converted_from_uuid, date, type, document_type, deleted_at, version, updated_at)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (uuid, account_email, number, client_uuid, client_name, client_address, client_rif, client_phone, iva_enabled, payment_method, due_date, budget, order_code, transport, salesperson, delivery_method, ship_to, observations, subtotal, tax, total, discount_amount, discount_percentage, exchange_rate, currency_symbol, working_currency, converted_from_uuid, date, type, document_type, status, deleted_at, version, updated_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                   ON CONFLICT(uuid) DO UPDATE SET 
                     number              = CASE WHEN excluded.version >= sync_invoices.version THEN excluded.number ELSE sync_invoices.number END,
                     client_uuid         = CASE WHEN excluded.version >= sync_invoices.version THEN excluded.client_uuid ELSE sync_invoices.client_uuid END,
@@ -345,6 +345,7 @@ export default async function handler(req, res) {
                     date                = CASE WHEN excluded.version >= sync_invoices.version THEN excluded.date ELSE sync_invoices.date END,
                     type                = CASE WHEN excluded.version >= sync_invoices.version THEN excluded.type ELSE sync_invoices.type END,
                     document_type       = CASE WHEN excluded.version >= sync_invoices.version THEN excluded.document_type ELSE sync_invoices.document_type END,
+                    status              = CASE WHEN excluded.version >= sync_invoices.version THEN excluded.status ELSE sync_invoices.status END,
                     deleted_at          = CASE WHEN excluded.version >= sync_invoices.version THEN excluded.deleted_at ELSE sync_invoices.deleted_at END,
                     updated_at          = CASE WHEN excluded.version >= sync_invoices.version THEN excluded.updated_at ELSE sync_invoices.updated_at END,
                     version             = CASE WHEN excluded.version >= sync_invoices.version THEN excluded.version ELSE sync_invoices.version END`,
@@ -352,7 +353,7 @@ export default async function handler(req, res) {
                     inv.uuid, user.email, inv.number, inv.client_uuid, inv.client_name, inv.client_address, inv.client_rif, inv.client_phone,
                     inv.iva_enabled, inv.payment_method, inv.due_date, inv.budget, inv.order_code, inv.transport, inv.salesperson, inv.delivery_method,
                     inv.ship_to, inv.observations, inv.subtotal, inv.tax, inv.total, inv.discount_amount, inv.discount_percentage, inv.exchange_rate, inv.currency_symbol, inv.working_currency,
-                    inv.converted_from_uuid, inv.date, inv.type, inv.document_type, inv.deleted_at, inv.version, inv.updated_at
+                    inv.converted_from_uuid, inv.date, inv.type, inv.document_type, inv.status, inv.deleted_at, inv.version, inv.updated_at
                 ])
             });
 
