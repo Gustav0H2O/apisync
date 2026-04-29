@@ -82,7 +82,7 @@ export default async function handler(req, res) {
         lastSync = req.body?.last_sync;
     }
 
-    const { clients = [], invoices = [], profile = null, products = [], suppliers = [], categories = [], stock_movements = [], drafts = [] } = push;
+    const { clients = [], invoices = [], profile = null, products = [], suppliers = [], categories = [], stock_movements = [] } = push;
 
 
     let connection;
@@ -292,23 +292,7 @@ export default async function handler(req, res) {
             });
         }
 
-        // ─── FASE 1.5: PUSH BORRADORES (DRAFTS) ──────────────────────────
-        for (const item of drafts) {
-            batchStatements.push({
-                sql: `INSERT INTO sync_drafts 
-                    (uuid, account_email, type, data, deleted_at, version, updated_at)
-                  VALUES (?, ?, ?, ?, ?, ?, ?)
-                  ON CONFLICT(uuid) DO UPDATE SET
-                    type           = CASE WHEN excluded.version >= COALESCE(sync_drafts.version, 0) THEN excluded.type ELSE sync_drafts.type END,
-                    data           = CASE WHEN excluded.version >= COALESCE(sync_drafts.version, 0) THEN excluded.data ELSE sync_drafts.data END,
-                    deleted_at     = CASE WHEN excluded.version >= COALESCE(sync_drafts.version, 0) THEN excluded.deleted_at ELSE sync_drafts.deleted_at END,
-                    updated_at     = CASE WHEN excluded.version >= COALESCE(sync_drafts.version, 0) THEN excluded.updated_at ELSE sync_drafts.updated_at END,
-                    version        = CASE WHEN excluded.version >= COALESCE(sync_drafts.version, 0) THEN excluded.version ELSE sync_drafts.version END`,
-                args: mapP([
-                    item.uuid, user.email, item.type, item.data, item.deleted_at, item.version, item.updated_at
-                ])
-            });
-        }
+
 
         // ─── FASE 2: PUSH FACTURAS + ÍTEMS ───────────────────────────────
         for (const inv of invoices) {
@@ -407,7 +391,6 @@ export default async function handler(req, res) {
         let productSql = `SELECT * FROM sync_products WHERE account_email = ?`;
         let categorySql = `SELECT * FROM sync_categories WHERE account_email = ?`;
         let movementSql = `SELECT * FROM sync_stock_movements WHERE account_email = ?`;
-        let draftSql = `SELECT * FROM sync_drafts WHERE account_email = ?`;
 
         if (lastSyncVal) {
             syncDate = new Date(lastSyncVal).toISOString().slice(0, 19).replace('T', ' ');
@@ -417,7 +400,6 @@ export default async function handler(req, res) {
             productSql += ` AND (updated_at >= ? OR deleted_at >= ?)`;
             categorySql += ` AND (updated_at >= ? OR deleted_at >= ?)`;
             movementSql += ` AND (updated_at >= ? OR deleted_at >= ?)`;
-            draftSql += ` AND (updated_at >= ? OR deleted_at >= ?)`;
         }
 
         const queryParams = [user.email];
@@ -429,7 +411,6 @@ export default async function handler(req, res) {
         const [remoteProducts] = await connection.execute(productSql, queryParams);
         const [remoteCategories] = await connection.execute(categorySql, queryParams);
         const [remoteMovements] = await connection.execute(movementSql, queryParams);
-        const [remoteDrafts] = await connection.execute(draftSql, queryParams);
 
         // ─── OPTIMIZACIÓN N+1: Cargar todos los ítems de las facturas devueltas en UNA sola consulta ───
         if (remoteInvoices.length > 0) {
@@ -506,10 +487,9 @@ export default async function handler(req, res) {
                 (SELECT COALESCE(SUM(version), 0) FROM sync_suppliers WHERE account_email = ?) + 
                 (SELECT COALESCE(SUM(version), 0) FROM sync_products WHERE account_email = ?) + 
                 (SELECT COALESCE(SUM(version), 0) FROM sync_categories WHERE account_email = ?) + 
-                (SELECT COALESCE(SUM(version), 0) FROM sync_stock_movements WHERE account_email = ?) +
-                (SELECT COALESCE(SUM(version), 0) FROM sync_drafts WHERE account_email = ?)
+                (SELECT COALESCE(SUM(version), 0) FROM sync_stock_movements WHERE account_email = ?)
             ) as global_checksum`,
-            [user.email, user.email, user.email, user.email, user.email, user.email, user.email, user.email]
+            [user.email, user.email, user.email, user.email, user.email, user.email, user.email]
         );
 
         const globalChecksum = parseInt(checksumResults[0]?.global_checksum || 0);
@@ -524,7 +504,6 @@ export default async function handler(req, res) {
             products: remoteProducts,
             categories: remoteCategories,
             stock_movements: remoteMovements,
-            drafts: remoteDrafts,
             profile: profileResponse,
             notifications: notifications,
             checksum: globalChecksum
