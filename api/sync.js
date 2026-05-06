@@ -163,7 +163,7 @@ export default async function handler(req, res) {
                     profile.manual_rate, profile.use_latest_rate, profile.usd_rate_latest, profile.usd_rate_previous,
                     profile.show_banner_invoice, profile.show_banner_quote, profile.show_banner_delivery,
                     profile.banner_color, profile.show_exchange_rate, profile.config_style,
-                    profile.products_by_stock || 0,
+                    (profile.products_by_stock !== undefined) ? profile.products_by_stock : 1,
                     profile.catalog_document_title, profile.catalog_layout_style,
                     profile.clear_catalog_logo ? 1 : 0, catalogLogoBuffer, catalogLogoBuffer,
                     profile.catalog_logo_position, profile.catalog_banner_color, profile.catalog_header_color,
