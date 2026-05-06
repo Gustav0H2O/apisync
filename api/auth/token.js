@@ -216,7 +216,7 @@ async function handleToken(req, res) {
             });
         }
 
-        await queryDB(`INSERT INTO devices (device_id, license_key, name, last_seen, paired_at, revoked) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0)`, [device_id, license_key, name || 'Sin nombre']);
+        await queryDB(`INSERT INTO devices (device_id, license_key, name, last_seen, paired_at, revoked) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0) ON CONFLICT(device_id) DO UPDATE SET license_key = excluded.license_key, name = excluded.name, revoked = 0, last_seen = CURRENT_TIMESTAMP`, [device_id, license_key, name || 'Sin nombre']);
     } else {
         await queryDB(`UPDATE devices SET last_seen = CURRENT_TIMESTAMP WHERE device_id = ?`, [device_id]);
     }
