@@ -78,8 +78,8 @@ export default async function handler(req, res) {
             req.pipe(bb);
         });
     } else {
-        push = req.body?.push || {};
-        lastSync = req.body?.last_sync;
+        push = (req.body && req.body.push) ? req.body.push : {};
+        lastSync = (req.body && req.body.last_sync) ? req.body.last_sync : null;
     }
 
     const { clients = [], invoices = [], profile = null, products = [], suppliers = [], categories = [], stock_movements = [] } = push;
