@@ -338,7 +338,7 @@ export default async function handler(req, res) {
                     inv.uuid, user.email, inv.number, inv.client_uuid, inv.client_name, inv.client_address, inv.client_rif, inv.client_phone,
                     inv.iva_enabled, inv.payment_method, inv.due_date, inv.budget, inv.order_code, inv.transport, inv.salesperson, inv.delivery_method,
                     inv.ship_to, inv.observations, inv.subtotal, inv.tax, inv.total, inv.discount_amount, inv.discount_percentage, inv.exchange_rate, inv.currency_symbol, inv.working_currency,
-                    inv.converted_from_uuid, inv.date, inv.type, inv.document_type, inv.status, inv.reference_document_uuid,
+                    inv.converted_from_uuid, inv.date, inv.type, inv.document_type, inv.status, inv.related_invoice_uuid,
                     inv.deleted_at, inv.version, inv.updated_at
                 ])
             });
@@ -381,6 +381,24 @@ export default async function handler(req, res) {
                 throw new Error('El driver de base de datos no soporta operaciones en lote (batch). Verifique api/_db.js');
             }
             await connection.batch(batchStatements);
+
+            // ─── FASE 2.5: NOTIFICAR CAMBIOS A OTROS DISPOSITIVOS ──────────────────
+            // Solo creamos la notificación si realmente se insertó/actualizó algo
+            try {
+                await connection.execute(
+                    `INSERT INTO app_notifications (target_email, title, message, type, action_data)
+                     VALUES (?, ?, ?, ?, ?)`,
+                    [
+                        user.email, 
+                        'Datos Actualizados', 
+                        `Cambios realizados por otro dispositivo`, 
+                        'DATA_CHANGED', 
+                        JSON.stringify({ sender_device_id: user.deviceId })
+                    ]
+                );
+            } catch (e) {
+                console.error('⚠️ [Sync] Error creando notificación reactiva:', e.message);
+            }
         }
 
         // ─── FASE 3: PULL (devolver todo al dispositivo o solo los cambios desde last_sync) ───────
