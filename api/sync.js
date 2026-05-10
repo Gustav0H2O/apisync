@@ -382,23 +382,8 @@ export default async function handler(req, res) {
             }
             await connection.batch(batchStatements);
 
-            // ─── FASE 2.5: NOTIFICAR CAMBIOS A OTROS DISPOSITIVOS ──────────────────
-            // Solo creamos la notificación si realmente se insertó/actualizó algo
-            try {
-                await connection.execute(
-                    `INSERT INTO app_notifications (target_email, title, message, type, action_data)
-                     VALUES (?, ?, ?, ?, ?)`,
-                    [
-                        user.email, 
-                        'Datos Actualizados', 
-                        `Cambios realizados por otro dispositivo`, 
-                        'DATA_CHANGED', 
-                        JSON.stringify({ sender_device_id: user.deviceId })
-                    ]
-                );
-            } catch (e) {
-                console.error('⚠️ [Sync] Error creando notificación reactiva:', e.message);
-            }
+            // Notificación reactiva eliminada por solicitud del usuario
+
         }
 
         // ─── FASE 3: PULL (devolver todo al dispositivo o solo los cambios desde last_sync) ───────
