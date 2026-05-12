@@ -82,7 +82,7 @@ export default async function handler(req, res) {
         lastSync = (req.body && req.body.last_sync) ? req.body.last_sync : null;
     }
 
-    const { clients = [], invoices = [], profile = null, products = [], suppliers = [], categories = [], stock_movements = [] } = push;
+    const { clients = [], invoices = [], profile = null, products = [], suppliers = [], categories = [], stock_movements = [], audit_logs = [] } = push;
 
 
     let connection;
@@ -292,6 +292,31 @@ export default async function handler(req, res) {
             });
         }
 
+        // ─── FASE 1.5: PUSH AUDIT LOGS ────────────────────────────────────
+        for (const item of audit_logs) {
+            batchStatements.push({
+                sql: `INSERT INTO sync_audit_logs 
+                    (uuid, account_email, user_email, action, entity_type, entity_uuid, old_value, new_value, occurred_at, device_id, deleted_at, version, updated_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  ON CONFLICT(uuid) DO UPDATE SET
+                    user_email  = CASE WHEN excluded.version >= sync_audit_logs.version THEN excluded.user_email ELSE sync_audit_logs.user_email END,
+                    action      = CASE WHEN excluded.version >= sync_audit_logs.version THEN excluded.action ELSE sync_audit_logs.action END,
+                    entity_type = CASE WHEN excluded.version >= sync_audit_logs.version THEN excluded.entity_type ELSE sync_audit_logs.entity_type END,
+                    entity_uuid = CASE WHEN excluded.version >= sync_audit_logs.version THEN excluded.entity_uuid ELSE sync_audit_logs.entity_uuid END,
+                    old_value   = CASE WHEN excluded.version >= sync_audit_logs.version THEN excluded.old_value ELSE sync_audit_logs.old_value END,
+                    new_value   = CASE WHEN excluded.version >= sync_audit_logs.version THEN excluded.new_value ELSE sync_audit_logs.new_value END,
+                    occurred_at = CASE WHEN excluded.version >= sync_audit_logs.version THEN excluded.occurred_at ELSE sync_audit_logs.occurred_at END,
+                    device_id   = CASE WHEN excluded.version >= sync_audit_logs.version THEN excluded.device_id ELSE sync_audit_logs.device_id END,
+                    deleted_at  = CASE WHEN excluded.version >= sync_audit_logs.version THEN excluded.deleted_at ELSE sync_audit_logs.deleted_at END,
+                    updated_at  = CASE WHEN excluded.version >= sync_audit_logs.version THEN excluded.updated_at ELSE sync_audit_logs.updated_at END,
+                    version     = CASE WHEN excluded.version >= sync_audit_logs.version THEN excluded.version ELSE sync_audit_logs.version END`,
+                args: mapP([
+                    item.uuid, user.email, item.user_email, item.action, item.entity_type, item.entity_uuid,
+                    item.old_value, item.new_value, item.occurred_at, item.device_id, item.deleted_at, item.version, item.updated_at
+                ])
+            });
+        }
+
 
 
         // ─── FASE 2: PUSH FACTURAS + ÍTEMS ───────────────────────────────
@@ -396,6 +421,7 @@ export default async function handler(req, res) {
         let productSql = `SELECT * FROM sync_products WHERE account_email = ?`;
         let categorySql = `SELECT * FROM sync_categories WHERE account_email = ?`;
         let movementSql = `SELECT * FROM sync_stock_movements WHERE account_email = ?`;
+        let auditLogSql = `SELECT * FROM sync_audit_logs WHERE account_email = ?`;
 
         if (lastSyncVal) {
             syncDate = new Date(lastSyncVal).toISOString().slice(0, 19).replace('T', ' ');
@@ -405,6 +431,7 @@ export default async function handler(req, res) {
             productSql += ` AND (updated_at >= ? OR deleted_at >= ?)`;
             categorySql += ` AND (updated_at >= ? OR deleted_at >= ?)`;
             movementSql += ` AND (updated_at >= ? OR deleted_at >= ?)`;
+            auditLogSql += ` AND (updated_at >= ? OR deleted_at >= ?)`;
         }
 
         const queryParams = [user.email];
@@ -416,6 +443,7 @@ export default async function handler(req, res) {
         const [remoteProducts] = await connection.execute(productSql, queryParams);
         const [remoteCategories] = await connection.execute(categorySql, queryParams);
         const [remoteMovements] = await connection.execute(movementSql, queryParams);
+        const [remoteAuditLogs] = await connection.execute(auditLogSql, queryParams);
 
         // ─── OPTIMIZACIÓN N+1: Cargar todos los ítems de las facturas devueltas en UNA sola consulta ───
         if (remoteInvoices.length > 0) {
@@ -492,9 +520,10 @@ export default async function handler(req, res) {
                 (SELECT COALESCE(SUM(version), 0) FROM sync_suppliers WHERE account_email = ?) + 
                 (SELECT COALESCE(SUM(version), 0) FROM sync_products WHERE account_email = ?) + 
                 (SELECT COALESCE(SUM(version), 0) FROM sync_categories WHERE account_email = ?) + 
-                (SELECT COALESCE(SUM(version), 0) FROM sync_stock_movements WHERE account_email = ?)
+                (SELECT COALESCE(SUM(version), 0) FROM sync_stock_movements WHERE account_email = ?) +
+                (SELECT COALESCE(SUM(version), 0) FROM sync_audit_logs WHERE account_email = ?)
             ) as global_checksum`,
-            [user.email, user.email, user.email, user.email, user.email, user.email, user.email]
+            [user.email, user.email, user.email, user.email, user.email, user.email, user.email, user.email]
         );
 
         const globalChecksum = parseInt(checksumResults[0]?.global_checksum || 0);
@@ -509,6 +538,7 @@ export default async function handler(req, res) {
             products: remoteProducts,
             categories: remoteCategories,
             stock_movements: remoteMovements,
+            audit_logs: remoteAuditLogs,
             profile: profileResponse,
             notifications: notifications,
             checksum: globalChecksum
