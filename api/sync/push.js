@@ -160,8 +160,13 @@ export default async function handler(req, res) {
                         continue;
                     }
                     if (incomingVersion === existingVersion) {
-                        // idempotencia — confirmar sin reescribir
+                        // idempotencia (retry) — confirmar sin reescribir. La fila
+                        // autoritativa viaja igual (regla 2: a igualdad gana el
+                        // servidor): si fue una edición concurrente con la MISMA
+                        // versión, el cliente se realinea en vez de divergir en
+                        // silencio; en un retry puro el merge es un no-op.
                         applied.push({ table, uuid, version: existingVersion });
+                        conflicts.push({ table, uuid, authoritative: existing });
                         continue;
                     }
 
