@@ -1,5 +1,6 @@
 import { getConnection } from './_db.js';
 import { verifyToken, isDeviceRevoked } from './_helpers.js';
+import { changeLogStatements, ensureCursorStatement } from './sync/_tables.js';
 
 /**
  * POST /api/sync
@@ -94,12 +95,21 @@ export default async function handler(req, res) {
         const mapP = (arr) => arr.map(v => v === undefined ? null : v);
 
         const batchStatements = [];
+        // Change-feed v47: cada escritura del flujo legacy también registra su
+        // entrada en change_log para que los dispositivos v47 la vean en
+        // tiempo real (transición v46/v47 — INFORME_API_SYNC.md §2.4).
+        batchStatements.push(ensureCursorStatement(user.email));
+        const logChange = (table, uuid, deletedAt) => {
+            batchStatements.push(...changeLogStatements(
+                user.email, table, uuid, deletedAt ? 'delete' : 'upsert'
+            ));
+        };
 
         // ─── FASE 0: PUSH PROFILE ────────────────────────────────────────
         if (profile) {
             // 1. Obtener perfil actual para comparar
             const [rows] = await connection.execute(
-                `SELECT business_name, slogan, rif, address, user_name, user_phone, profile_change_count, profile_change_limit 
+                `SELECT business_name, slogan, rif, address, user_name, user_phone, profile_change_count, profile_change_limit, COALESCE(version, 1) AS version
                  FROM clientes WHERE email = ?`,
                 [user.email]
             );
@@ -176,6 +186,12 @@ export default async function handler(req, res) {
                     user.email, profile.version
                 ])
             });
+            // Solo se registra en el feed cuando la versión avanza de verdad
+            // (el cliente legacy envía el perfil en CADA ciclo).
+            const currentVersion = rows.length ? Number(rows[0].version || 1) : 0;
+            if (Number(profile.version || 1) > currentVersion) {
+                logChange('profile', user.email, null);
+            }
         }
 
         // ─── FASE 1: PUSH CLIENTES ────────────────────────────────────────
@@ -195,6 +211,7 @@ export default async function handler(req, res) {
                     version       = CASE WHEN excluded.version >= sync_clients.version THEN excluded.version ELSE sync_clients.version END`,
                 args: mapP([item.uuid, user.email, item.name, item.phone, item.rif, item.address, item.discount_rate, item.deleted_at, item.version, item.updated_at])
             });
+            logChange('clients', item.uuid, item.deleted_at);
         }
 
         // ─── FASE 1.1: PUSH PROVEEDORES ───────────────────────────────────
@@ -215,6 +232,7 @@ export default async function handler(req, res) {
                     version        = CASE WHEN excluded.version >= sync_suppliers.version THEN excluded.version ELSE sync_suppliers.version END`,
                 args: mapP([item.uuid, user.email, item.name, item.phone, item.rif, item.address, item.email, item.contact_person, item.deleted_at, item.version, item.updated_at])
             });
+            logChange('suppliers', item.uuid, item.deleted_at);
         }
 
         // ─── FASE 1.2: PUSH PRODUCTOS ──────────────────────────────────────
@@ -253,6 +271,7 @@ export default async function handler(req, res) {
                     item.deleted_at, item.version, item.updated_at
                 ])
             });
+            logChange('products', item.uuid, item.deleted_at);
         }
 
         // ─── FASE 1.3: PUSH CATEGORÍAS ────────────────────────────────────
@@ -268,6 +287,7 @@ export default async function handler(req, res) {
                     version    = CASE WHEN excluded.version >= sync_categories.version THEN excluded.version ELSE sync_categories.version END`,
                 args: mapP([item.uuid, user.email, item.name, item.deleted_at, item.version, item.updated_at])
             });
+            logChange('categories', item.uuid, item.deleted_at);
         }
 
         // ─── FASE 1.4: PUSH MOVIMIENTOS STOCK ────────────────────────────
@@ -290,6 +310,7 @@ export default async function handler(req, res) {
                     item.reference_uuid, item.date, item.deleted_at, item.version, item.updated_at
                 ])
             });
+            logChange('stock_movements', item.uuid, item.deleted_at);
         }
 
         // ─── FASE 1.5: PUSH AUDIT LOGS ────────────────────────────────────
@@ -315,17 +336,22 @@ export default async function handler(req, res) {
                     item.old_value, item.new_value, item.occurred_at, item.device_id, item.deleted_at, item.version, item.updated_at
                 ])
             });
+            logChange('audit_logs', item.uuid, item.deleted_at);
         }
 
 
 
         // ─── FASE 2: PUSH FACTURAS + ÍTEMS ───────────────────────────────
+        // Campos fiscales SENIAT con COALESCE: un cliente v46 (que no los
+        // envía) nunca borra los valores fiscales que un v47 ya subió.
+        // Guard de sellado: una factura sellada solo se reescribe si el sello
+        // y el hash se preservan (INFORME_API_SYNC.md §4).
         for (const inv of invoices) {
             batchStatements.push({
-                sql: `INSERT INTO sync_invoices 
-                    (uuid, account_email, number, client_uuid, client_name, client_address, client_rif, client_phone, iva_enabled, payment_method, due_date, budget, order_code, transport, salesperson, delivery_method, ship_to, observations, subtotal, tax, total, discount_amount, discount_percentage, exchange_rate, currency_symbol, working_currency, converted_from_uuid, date, type, document_type, status, related_invoice_uuid, deleted_at, version, updated_at)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                  ON CONFLICT(uuid) DO UPDATE SET 
+                sql: `INSERT INTO sync_invoices
+                    (uuid, account_email, number, client_uuid, client_name, client_address, client_rif, client_phone, iva_enabled, payment_method, due_date, budget, order_code, transport, salesperson, delivery_method, ship_to, observations, subtotal, tax, total, discount_amount, discount_percentage, exchange_rate, currency_symbol, working_currency, converted_from_uuid, date, type, document_type, status, related_invoice_uuid, control_number, correlative_number, document_hash, sealed_at, igtf_percentage, igtf_amount, igtf_base, tax_base_general, tax_base_reduced, tax_base_additional, tax_base_exempt, applied_retention_iva, applied_retention_islr, emission_source, deleted_at, version, updated_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  ON CONFLICT(uuid) DO UPDATE SET
                     number              = CASE WHEN excluded.version >= sync_invoices.version THEN excluded.number ELSE sync_invoices.number END,
                     client_uuid         = CASE WHEN excluded.version >= sync_invoices.version THEN excluded.client_uuid ELSE sync_invoices.client_uuid END,
                     client_name         = CASE WHEN excluded.version >= sync_invoices.version THEN excluded.client_name ELSE sync_invoices.client_name END,
@@ -356,32 +382,63 @@ export default async function handler(req, res) {
                     document_type       = CASE WHEN excluded.version >= sync_invoices.version THEN excluded.document_type ELSE sync_invoices.document_type END,
                     status              = CASE WHEN excluded.version >= sync_invoices.version THEN excluded.status ELSE sync_invoices.status END,
                     related_invoice_uuid = CASE WHEN excluded.version >= sync_invoices.version THEN excluded.related_invoice_uuid ELSE sync_invoices.related_invoice_uuid END,
+                    control_number      = CASE WHEN excluded.version >= sync_invoices.version THEN COALESCE(excluded.control_number, sync_invoices.control_number) ELSE sync_invoices.control_number END,
+                    correlative_number  = CASE WHEN excluded.version >= sync_invoices.version THEN COALESCE(excluded.correlative_number, sync_invoices.correlative_number) ELSE sync_invoices.correlative_number END,
+                    document_hash       = CASE WHEN excluded.version >= sync_invoices.version THEN COALESCE(excluded.document_hash, sync_invoices.document_hash) ELSE sync_invoices.document_hash END,
+                    sealed_at           = CASE WHEN excluded.version >= sync_invoices.version THEN COALESCE(excluded.sealed_at, sync_invoices.sealed_at) ELSE sync_invoices.sealed_at END,
+                    igtf_percentage     = CASE WHEN excluded.version >= sync_invoices.version THEN COALESCE(excluded.igtf_percentage, sync_invoices.igtf_percentage) ELSE sync_invoices.igtf_percentage END,
+                    igtf_amount         = CASE WHEN excluded.version >= sync_invoices.version THEN COALESCE(excluded.igtf_amount, sync_invoices.igtf_amount) ELSE sync_invoices.igtf_amount END,
+                    igtf_base           = CASE WHEN excluded.version >= sync_invoices.version THEN COALESCE(excluded.igtf_base, sync_invoices.igtf_base) ELSE sync_invoices.igtf_base END,
+                    tax_base_general    = CASE WHEN excluded.version >= sync_invoices.version THEN COALESCE(excluded.tax_base_general, sync_invoices.tax_base_general) ELSE sync_invoices.tax_base_general END,
+                    tax_base_reduced    = CASE WHEN excluded.version >= sync_invoices.version THEN COALESCE(excluded.tax_base_reduced, sync_invoices.tax_base_reduced) ELSE sync_invoices.tax_base_reduced END,
+                    tax_base_additional = CASE WHEN excluded.version >= sync_invoices.version THEN COALESCE(excluded.tax_base_additional, sync_invoices.tax_base_additional) ELSE sync_invoices.tax_base_additional END,
+                    tax_base_exempt     = CASE WHEN excluded.version >= sync_invoices.version THEN COALESCE(excluded.tax_base_exempt, sync_invoices.tax_base_exempt) ELSE sync_invoices.tax_base_exempt END,
+                    applied_retention_iva  = CASE WHEN excluded.version >= sync_invoices.version THEN COALESCE(excluded.applied_retention_iva, sync_invoices.applied_retention_iva) ELSE sync_invoices.applied_retention_iva END,
+                    applied_retention_islr = CASE WHEN excluded.version >= sync_invoices.version THEN COALESCE(excluded.applied_retention_islr, sync_invoices.applied_retention_islr) ELSE sync_invoices.applied_retention_islr END,
+                    emission_source     = CASE WHEN excluded.version >= sync_invoices.version THEN COALESCE(excluded.emission_source, sync_invoices.emission_source) ELSE sync_invoices.emission_source END,
                     deleted_at          = CASE WHEN excluded.version >= sync_invoices.version THEN excluded.deleted_at ELSE sync_invoices.deleted_at END,
                     updated_at          = CASE WHEN excluded.version >= sync_invoices.version THEN excluded.updated_at ELSE sync_invoices.updated_at END,
-                    version             = CASE WHEN excluded.version >= sync_invoices.version THEN excluded.version ELSE sync_invoices.version END`,
+                    version             = CASE WHEN excluded.version >= sync_invoices.version THEN excluded.version ELSE sync_invoices.version END
+                  WHERE sync_invoices.sealed_at IS NULL
+                     OR (excluded.sealed_at IS NOT NULL AND excluded.document_hash = sync_invoices.document_hash)`,
                 args: mapP([
                     inv.uuid, user.email, inv.number, inv.client_uuid, inv.client_name, inv.client_address, inv.client_rif, inv.client_phone,
                     inv.iva_enabled, inv.payment_method, inv.due_date, inv.budget, inv.order_code, inv.transport, inv.salesperson, inv.delivery_method,
                     inv.ship_to, inv.observations, inv.subtotal, inv.tax, inv.total, inv.discount_amount, inv.discount_percentage, inv.exchange_rate, inv.currency_symbol, inv.working_currency,
                     inv.converted_from_uuid, inv.date, inv.type, inv.document_type, inv.status, inv.related_invoice_uuid,
+                    inv.control_number, inv.correlative_number, inv.document_hash, inv.sealed_at,
+                    inv.igtf_percentage, inv.igtf_amount, inv.igtf_base,
+                    inv.tax_base_general, inv.tax_base_reduced, inv.tax_base_additional, inv.tax_base_exempt,
+                    inv.applied_retention_iva, inv.applied_retention_islr, inv.emission_source,
                     inv.deleted_at, inv.version, inv.updated_at
                 ])
             });
+            logChange('invoices', inv.uuid, inv.deleted_at);
 
+            // Guard de sellado en items: los ítems de una factura sellada son
+            // inmutables SALVO que el cambio venga de la propia factura sellada
+            // preservando su hash (p. ej. soft-delete a papelera con retención).
+            const parentSealedGuard = `AND (
+                NOT EXISTS (SELECT 1 FROM sync_invoices p
+                            WHERE p.uuid = sync_invoice_items.invoice_uuid
+                              AND p.sealed_at IS NOT NULL)
+                OR ? IS NOT NULL)`;
             if (inv.deleted_at && Array.isArray(inv.items)) {
                 for (const it of inv.items) {
                     batchStatements.push({
-                        sql: `UPDATE sync_invoice_items SET deleted_at = ?, updated_at = ?, version = version + 1 WHERE uuid = ? AND deleted_at IS NULL`,
-                        args: [inv.deleted_at, inv.updated_at, it.uuid]
+                        sql: `UPDATE sync_invoice_items SET deleted_at = ?, updated_at = ?, version = version + 1
+                              WHERE uuid = ? AND deleted_at IS NULL ${parentSealedGuard}`,
+                        args: [inv.deleted_at, inv.updated_at, it.uuid, inv.document_hash === undefined ? null : inv.document_hash]
                     });
+                    logChange('invoice_items', it.uuid, inv.deleted_at);
                 }
             } else if (inv.items && Array.isArray(inv.items)) {
                 for (const it of inv.items) {
                     batchStatements.push({
-                        sql: `INSERT INTO sync_invoice_items 
-                            (uuid, invoice_uuid, code, description, quantity, unit_price, total_price, is_exempt, product_uuid, discount, deleted_at, version, updated_at)
-                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                          ON CONFLICT(uuid) DO UPDATE SET 
+                        sql: `INSERT INTO sync_invoice_items
+                            (uuid, invoice_uuid, code, description, quantity, unit_price, total_price, is_exempt, product_uuid, discount, tax_type, deleted_at, version, updated_at)
+                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                          ON CONFLICT(uuid) DO UPDATE SET
                              code         = CASE WHEN excluded.version >= sync_invoice_items.version THEN excluded.code ELSE sync_invoice_items.code END,
                              description  = CASE WHEN excluded.version >= sync_invoice_items.version THEN excluded.description ELSE sync_invoice_items.description END,
                              quantity     = CASE WHEN excluded.version >= sync_invoice_items.version THEN excluded.quantity ELSE sync_invoice_items.quantity END,
@@ -390,17 +447,23 @@ export default async function handler(req, res) {
                              is_exempt    = CASE WHEN excluded.version >= sync_invoice_items.version THEN excluded.is_exempt ELSE sync_invoice_items.is_exempt END,
                              product_uuid = CASE WHEN excluded.version >= sync_invoice_items.version THEN excluded.product_uuid ELSE sync_invoice_items.product_uuid END,
                              discount     = CASE WHEN excluded.version >= sync_invoice_items.version THEN excluded.discount ELSE sync_invoice_items.discount END,
+                             tax_type     = CASE WHEN excluded.version >= sync_invoice_items.version THEN COALESCE(excluded.tax_type, sync_invoice_items.tax_type) ELSE sync_invoice_items.tax_type END,
                              deleted_at   = CASE WHEN excluded.version >= sync_invoice_items.version THEN excluded.deleted_at ELSE sync_invoice_items.deleted_at END,
                              updated_at   = CASE WHEN excluded.version >= sync_invoice_items.version THEN excluded.updated_at ELSE sync_invoice_items.updated_at END,
-                             version      = CASE WHEN excluded.version >= sync_invoice_items.version THEN excluded.version ELSE sync_invoice_items.version END`,
-                        args: mapP([it.uuid, inv.uuid, it.code, it.description, it.quantity, it.unit_price, it.total_price, it.is_exempt, it.product_uuid, it.discount, it.deleted_at, it.version, it.updated_at])
+                             version      = CASE WHEN excluded.version >= sync_invoice_items.version THEN excluded.version ELSE sync_invoice_items.version END
+                          WHERE NOT EXISTS (SELECT 1 FROM sync_invoices p
+                                            WHERE p.uuid = sync_invoice_items.invoice_uuid
+                                              AND p.sealed_at IS NOT NULL)`,
+                        args: mapP([it.uuid, inv.uuid, it.code, it.description, it.quantity, it.unit_price, it.total_price, it.is_exempt, it.product_uuid, it.discount, it.tax_type, it.deleted_at, it.version, it.updated_at])
                     });
+                    logChange('invoice_items', it.uuid, it.deleted_at);
                 }
             }
         }
 
-        // Ejecutar todo el PUSH en una sola transacción batch si hay algo que enviar
-        if (batchStatements.length > 0) {
+        // Ejecutar todo el PUSH en una sola transacción batch si hay algo que
+        // enviar (el statement [0] es el INSERT OR IGNORE del cursor)
+        if (batchStatements.length > 1) {
             if (typeof connection.batch !== 'function') {
                 console.error('❌ [Sync Critical]: connection.batch no es una función. Métodos disponibles:', Object.keys(connection));
                 throw new Error('El driver de base de datos no soporta operaciones en lote (batch). Verifique api/_db.js');
