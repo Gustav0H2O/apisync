@@ -129,7 +129,7 @@ async function handleDevicesList(req, res) {
             current_device_id: user.deviceId, 
             max_devices_allowed: policy.maxDevicesAllowed, 
             cooldown_days: policy.pairCooldownDays, 
-            active_count: devices.filter(d => d.revoked === 0).length 
+            active_count: devices.filter(d => Number(d.revoked) === 0).length
         });
     } catch (e) { return res.status(500).json({ error: e.message }); }
 }
@@ -194,7 +194,9 @@ async function handleToken(req, res) {
     if (lic.tipo === 'SAAS' && lic.fecha_vencimiento && new Date(lic.fecha_vencimiento) < new Date()) return res.status(401).json({ error: 'Licencia vencida' });
     
     const known = await queryDB(`SELECT revoked FROM devices WHERE device_id = ? AND license_key = ? LIMIT 1`, [device_id, license_key]);
-    if (known.length && known[0].revoked === 1) return res.status(401).json({ error: 'DEVICE_REVOKED' });
+    // Number(): libsql (intMode 'string') devuelve revoked como "1" — con la
+    // comparación estricta un dispositivo desvinculado seguía obteniendo token.
+    if (known.length && Number(known[0].revoked) === 1) return res.status(401).json({ error: 'DEVICE_REVOKED' });
 
     const policy = await getLicensePolicy(license_key);
 
