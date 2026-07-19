@@ -172,6 +172,28 @@ async function handleUnlink(req, res) {
     } catch (e) { return res.status(500).json({ error: e.message }); }
 }
 
+async function handleFcmRegister(req, res) {
+    const user = await verifyToken(req);
+    if (!user) return res.status(401).json({ error: 'No autorizado' });
+    const { device_id, fcm_token } = req.body || {};
+    if (!device_id || !fcm_token) {
+        return res.status(400).json({ error: 'Faltan device_id o fcm_token' });
+    }
+    try {
+        // Ligar el token a ESTE dispositivo dentro de la licencia del token JWT
+        // (evita que un dispositivo registre el token bajo otra cuenta).
+        await queryDB(
+            'UPDATE devices SET fcm_token = ? WHERE device_id = ? AND license_key = ?',
+            [fcm_token, device_id, user.licenseKey]
+        );
+        return res.status(200).json({ ok: true });
+    } catch (e) {
+        // Columna ausente (migración pendiente): no romper el flujo del cliente.
+        console.warn('[FCM Register]', e.message);
+        return res.status(200).json({ ok: false, note: 'fcm_token no disponible aún' });
+    }
+}
+
 async function handleRename(req, res) {
     const user = await verifyToken(req);
     if (!user) return res.status(401).json({ error: 'No autorizado' });
@@ -242,6 +264,7 @@ export default async function handler(req, res) {
             case 'devices': return await handleDevicesList(req, res);
             case 'unlink': return await handleUnlink(req, res);
             case 'rename': return await handleRename(req, res);
+            case 'fcm_register': return await handleFcmRegister(req, res);
             case 'count': 
                 const userCount = await verifyToken(req);
                 if (!userCount) return res.status(401).json({ error: 'No autorizado' });
