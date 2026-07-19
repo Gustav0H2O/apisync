@@ -4,6 +4,7 @@
     { "source": "/api/pairing/:action", "destination": "/api/auth/token.js?action=:action" },
     { "source": "/api/proxy", "destination": "/api/db.js" },
     { "source": "/api/auth/token", "destination": "/api/auth/token.js?action=token" },
+    { "source": "/api/sync/:action", "destination": "/api/sync_router.js?action=:action" },
     { "source": "/api/sync", "destination": "/api/sync.js" }
   ]
 }
