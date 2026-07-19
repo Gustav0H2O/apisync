@@ -1,6 +1,7 @@
 import { getConnection } from './_db.js';
 import { verifyToken, isDeviceRevoked } from './_helpers.js';
 import { changeLogStatements, ensureCursorStatement, TABLE_SPECS } from './sync/_tables.js';
+import { sendToLicense } from './_fcm.js';
 
 /**
  * POST /api/sync
@@ -492,8 +493,17 @@ export default async function handler(req, res) {
             }
             await connection.batch(batchStatements);
 
-            // Notificación reactiva eliminada por solicitud del usuario
-
+            // Tiempo real: despertar a los OTROS dispositivos de la cuenta con un
+            // push silencioso para que sincronicen aunque estén cerrados.
+            // Best-effort: nunca rompe el flujo del sync legacy.
+            try {
+                await sendToLicense(connection, user.licenseKey, {
+                    excludeDeviceId: user.deviceId,
+                    data: { type: 'sync' },
+                });
+            } catch (e) {
+                console.warn('[Sync legacy] Aviso FCM falló:', e.message);
+            }
         }
 
         // ─── FASE 3: PULL (devolver todo al dispositivo o solo los cambios desde last_sync) ───────

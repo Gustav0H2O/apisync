@@ -4,6 +4,7 @@ import {
     TABLE_SPECS, TABLE_ORDER, toNumber,
     changeLogStatements, ensureCursorStatement,
 } from './_tables.js';
+import { sendToLicense } from '../_fcm.js';
 
 /**
  * POST /api/sync/push  (auth JWT) — protocolo v47 (change-feed)
@@ -254,6 +255,20 @@ export default async function handler(req, res) {
             'SELECT COALESCE((SELECT seq FROM account_cursor WHERE account_email = ?), 0) AS seq',
             [user.email]
         );
+
+        // Tiempo real: si algo cambió, despertar a los OTROS dispositivos de la
+        // cuenta con un push SILENCIOSO (solo-datos) para que sincronicen aunque
+        // estén cerrados. Best-effort: nunca rompe la respuesta del push.
+        if (applied.length > 0 || (profileResult === 'applied')) {
+            try {
+                await sendToLicense(connection, user.licenseKey, {
+                    excludeDeviceId: user.deviceId,
+                    data: { type: 'sync', seq: String(Number(seqRows[0]?.seq || 0)) },
+                });
+            } catch (e) {
+                console.warn('[Push v47] Aviso FCM falló:', e.message);
+            }
+        }
 
         const response = {
             seq: Number(seqRows[0]?.seq || 0),
