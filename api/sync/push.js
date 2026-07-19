@@ -65,22 +65,30 @@ export default async function handler(req, res) {
             const uuids = rows.map(r => String(r.uuid || '')).filter(Boolean);
             if (!uuids.length) continue;
 
-            // Estado actual de las filas entrantes
+            // Estado actual de las filas entrantes.
+            // Tolerante a esquema viejo: si la tabla espejo aún no existe en
+            // Turso (p. ej. sync_taxes con la migración pendiente), se omite
+            // SOLO esa tabla en vez de tumbar el push completo.
             const placeholders = uuids.map(() => '?').join(',');
             let existingRows;
-            if (spec.accountScoped) {
-                [existingRows] = await connection.execute(
-                    `SELECT * FROM ${spec.remote} WHERE uuid IN (${placeholders})`,
-                    uuids
-                );
-            } else {
-                [existingRows] = await connection.execute(
-                    `SELECT i.*, p.account_email AS parent_account, p.sealed_at AS parent_sealed
-                     FROM ${spec.remote} i
-                     LEFT JOIN ${spec.parent.table} p ON p.uuid = i.${spec.parent.fk}
-                     WHERE i.uuid IN (${placeholders})`,
-                    uuids
-                );
+            try {
+                if (spec.accountScoped) {
+                    [existingRows] = await connection.execute(
+                        `SELECT * FROM ${spec.remote} WHERE uuid IN (${placeholders})`,
+                        uuids
+                    );
+                } else {
+                    [existingRows] = await connection.execute(
+                        `SELECT i.*, p.account_email AS parent_account, p.sealed_at AS parent_sealed
+                         FROM ${spec.remote} i
+                         LEFT JOIN ${spec.parent.table} p ON p.uuid = i.${spec.parent.fk}
+                         WHERE i.uuid IN (${placeholders})`,
+                        uuids
+                    );
+                }
+            } catch (e) {
+                console.warn(`⚠️ [Push v47] Tabla ${spec.remote} no disponible (${e.message}). Omitida.`);
+                continue;
             }
             const existingByUuid = new Map(existingRows.map(r => [String(r.uuid), r]));
 

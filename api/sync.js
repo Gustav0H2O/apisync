@@ -1,6 +1,6 @@
 import { getConnection } from './_db.js';
 import { verifyToken, isDeviceRevoked } from './_helpers.js';
-import { changeLogStatements, ensureCursorStatement } from './sync/_tables.js';
+import { changeLogStatements, ensureCursorStatement, TABLE_SPECS } from './sync/_tables.js';
 
 /**
  * POST /api/sync
@@ -84,6 +84,9 @@ export default async function handler(req, res) {
     }
 
     const { clients = [], invoices = [], profile = null, products = [], suppliers = [], categories = [], stock_movements = [], audit_logs = [] } = push;
+    // v48: tablas que se escapaban del flujo legacy (el bootstrap/full-push no
+    // podía repoblarlas y un dispositivo nuevo no las recibía en el snapshot).
+    const simpleTables = ['taxes', 'expenses', 'fiscal_transmissions', 'user_roles'];
 
 
     let connection;
@@ -339,7 +342,26 @@ export default async function handler(req, res) {
             logChange('audit_logs', item.uuid, item.deleted_at);
         }
 
-
+        // ─── FASE 1.6: PUSH TABLAS SIMPLES v48 ────────────────────────────
+        // taxes / expenses / fiscal_transmissions / user_roles con el mismo
+        // patrón "gana la versión mayor", reutilizando TABLE_SPECS del feed.
+        for (const tableName of simpleTables) {
+            const spec = TABLE_SPECS[tableName];
+            const rows = Array.isArray(push[tableName]) ? push[tableName] : [];
+            for (const item of rows) {
+                if (!item || !item.uuid) continue;
+                const allCols = ['uuid', 'account_email', ...spec.cols, 'deleted_at', 'version', 'updated_at'];
+                const updatable = [...spec.cols, 'deleted_at', 'updated_at', 'version'];
+                batchStatements.push({
+                    sql: `INSERT INTO ${spec.remote} (${allCols.join(', ')})
+                          VALUES (${allCols.map(() => '?').join(', ')})
+                          ON CONFLICT(uuid) DO UPDATE SET
+                          ${updatable.map(c => `${c} = CASE WHEN excluded.version >= ${spec.remote}.version THEN excluded.${c} ELSE ${spec.remote}.${c} END`).join(',\n                          ')}`,
+                    args: mapP([item.uuid, user.email, ...spec.cols.map(c => item[c]), item.deleted_at, item.version, item.updated_at]),
+                });
+                logChange(tableName, item.uuid, item.deleted_at);
+            }
+        }
 
         // ─── FASE 2: PUSH FACTURAS + ÍTEMS ───────────────────────────────
         // Campos fiscales SENIAT con COALESCE: un cliente v46 (que no los
@@ -508,6 +530,23 @@ export default async function handler(req, res) {
         const [remoteMovements] = await connection.execute(movementSql, queryParams);
         const [remoteAuditLogs] = await connection.execute(auditLogSql, queryParams);
 
+        // v48: pull de las tablas que se escapaban del snapshot legacy.
+        // Tolerante a esquema viejo: si sync_taxes aún no existe en Turso
+        // (migración pendiente), esa tabla se omite sin romper el resto.
+        const simplePulls = {};
+        for (const tableName of simpleTables) {
+            const spec = TABLE_SPECS[tableName];
+            let sql = `SELECT * FROM ${spec.remote} WHERE account_email = ?`;
+            if (syncDate) sql += ` AND (updated_at >= ? OR deleted_at >= ?)`;
+            try {
+                const [rows] = await connection.execute(sql, queryParams);
+                simplePulls[tableName] = rows;
+            } catch (e) {
+                console.warn(`⚠️ [Sync Legacy] Pull de ${tableName} omitido: ${e.message}`);
+                simplePulls[tableName] = [];
+            }
+        }
+
         // ─── OPTIMIZACIÓN N+1: Cargar todos los ítems de las facturas devueltas en UNA sola consulta ───
         if (remoteInvoices.length > 0) {
             const invoiceUuids = remoteInvoices.map(inv => inv.uuid);
@@ -602,6 +641,10 @@ export default async function handler(req, res) {
             categories: remoteCategories,
             stock_movements: remoteMovements,
             audit_logs: remoteAuditLogs,
+            taxes: simplePulls.taxes,
+            expenses: simplePulls.expenses,
+            fiscal_transmissions: simplePulls.fiscal_transmissions,
+            user_roles: simplePulls.user_roles,
             profile: profileResponse,
             notifications: notifications,
             checksum: globalChecksum

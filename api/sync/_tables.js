@@ -68,6 +68,14 @@ export const TABLE_SPECS = {
         accountScoped: true,
         cols: ['product_uuid', 'quantity', 'type', 'reason', 'reference_uuid', 'date'],
     },
+    // v48: alícuotas IVA/IGTF personalizadas — no se sincronizaban en absoluto
+    // (cada dispositivo calculaba totales con tasas distintas). Requiere la
+    // tabla sync_taxes en Turso (scripts/migracion_taxes_turso.sql).
+    taxes: {
+        remote: 'sync_taxes',
+        accountScoped: true,
+        cols: ['name', 'rate', 'type', 'is_default'],
+    },
     audit_logs: {
         remote: 'sync_audit_logs',
         accountScoped: true,
@@ -105,7 +113,7 @@ export const TABLE_SPECS = {
 export const TABLE_ORDER = [
     'clients', 'suppliers', 'categories', 'products', 'invoices',
     'invoice_items', 'stock_movements', 'audit_logs', 'expenses',
-    'fiscal_transmissions', 'user_roles',
+    'fiscal_transmissions', 'user_roles', 'taxes',
 ];
 
 export function toNumber(value, fallback = 0) {
