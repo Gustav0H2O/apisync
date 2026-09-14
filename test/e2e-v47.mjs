@@ -37,8 +37,13 @@ function assert(cond, msg) {
 
 const db = getConnection();
 await ensureMirrorTables(db, Object.keys(TABLE_SPECS));
-await db.execute('CREATE TABLE devices(device_id TEXT PRIMARY KEY, revoked INTEGER, license_key TEXT)', []);
-await db.execute('INSERT INTO devices(device_id, revoked, license_key) VALUES (?, 0, ?)', [DEVICE, LIC]);
+await db.execute('CREATE TABLE IF NOT EXISTS devices(device_id TEXT PRIMARY KEY, revoked INTEGER, license_key TEXT)', []);
+
+await db.execute('DELETE FROM change_log WHERE account_email = ?', [EMAIL]);
+await db.execute('DELETE FROM account_cursor WHERE account_email = ?', [EMAIL]);
+await db.execute('DELETE FROM sync_clients WHERE account_email = ?', [EMAIL]);
+await db.execute('DELETE FROM sync_invoices WHERE account_email = ?', [EMAIL]);
+await db.execute('INSERT OR REPLACE INTO devices(device_id, revoked, license_key) VALUES (?, 0, ?)', [DEVICE, LIC]);
 
 // 1. Push inserta + cursor + change_log (auto-ensure crea sync_clients).
 let r = res();

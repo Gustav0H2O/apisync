@@ -4,7 +4,7 @@ import {
     TABLE_SPECS, TABLE_ORDER, toNumber,
     changeLogStatements, ensureCursorStatement,
 } from './_tables.js';
-import { ensureMirrorTables } from './_ensure.js';
+import { ensureMirrorTables, getTableColumns } from './_ensure.js';
 import { sendToLicense } from '../_fcm.js';
 
 /**
@@ -63,6 +63,7 @@ export default async function handler(req, res) {
         await ensureMirrorTables(
             connection,
             Object.keys(changes).filter((t) => TABLE_SPECS[t]),
+            changes,
         );
 
         // ─── Pre-lecturas por tabla (fuera del batch; el batch es write-atomic
@@ -71,6 +72,7 @@ export default async function handler(req, res) {
             const rows = changes[table];
             if (!Array.isArray(rows) || !rows.length) continue;
             const spec = TABLE_SPECS[table];
+            const physicalCols = await getTableColumns(connection, table);
 
             const uuids = rows.map(r => String(r.uuid || '')).filter(Boolean);
             if (!uuids.length) continue;
@@ -178,17 +180,12 @@ export default async function handler(req, res) {
                         continue;
                     }
                     if (incomingVersion === existingVersion) {
-                        // idempotencia (retry) — confirmar sin reescribir. La fila
-                        // autoritativa viaja igual (regla 2: a igualdad gana el
-                        // servidor): si fue una edición concurrente con la MISMA
-                        // versión, el cliente se realinea en vez de divergir en
-                        // silencio; en un retry puro el merge es un no-op.
                         applied.push({ table, uuid, version: existingVersion });
                         conflicts.push({ table, uuid, authoritative: existing });
                         continue;
                     }
 
-                    statements.push(upsertStatement(spec, user.email, row, uuid, incomingVersion, now));
+                    statements.push(upsertStatement(spec, user.email, row, uuid, incomingVersion, now, physicalCols));
                     statements.push(...changeLogStatements(
                         user.email, table, uuid, row.deleted_at ? 'delete' : 'upsert'
                     ));
@@ -222,7 +219,7 @@ export default async function handler(req, res) {
                         continue;
                     }
                     const finalVersion = toNumber(canonical.version, 1) + 1;
-                    statements.push(upsertStatement(spec, user.email, row, canonicalUuid, finalVersion, now));
+                    statements.push(upsertStatement(spec, user.email, row, canonicalUuid, finalVersion, now, physicalCols));
                     // Re-apuntar los items del uuid entrante al canónico
                     if (table === 'invoices') {
                         statements.push({
@@ -239,7 +236,7 @@ export default async function handler(req, res) {
 
                 // Inserción limpia
                 const finalVersion = Math.max(incomingVersion, 1);
-                statements.push(upsertStatement(spec, user.email, row, uuid, finalVersion, now));
+                statements.push(upsertStatement(spec, user.email, row, uuid, finalVersion, now, physicalCols));
                 statements.push(...changeLogStatements(
                     user.email, table, uuid, row.deleted_at ? 'delete' : 'upsert'
                 ));
@@ -291,14 +288,28 @@ export default async function handler(req, res) {
     }
 }
 
-function upsertStatement(spec, email, row, uuid, version, now) {
+function upsertStatement(spec, email, row, uuid, version, now, physicalCols = null) {
     const cols = ['uuid'];
     const vals = [uuid];
     if (spec.accountScoped) {
         cols.push('account_email');
         vals.push(email);
     }
-    for (const c of spec.cols) {
+
+    // Filtrar columnas contra las columnas físicas reales de Turso
+    const allowed = spec.cols.filter(c => !physicalCols || physicalCols.has(c));
+
+    // Si la fila trae columnas dinámicas que ya fueron auto-migradas en Turso:
+    if (physicalCols) {
+        for (const key of Object.keys(row)) {
+            if (physicalCols.has(key) && !allowed.includes(key) &&
+                !['uuid', 'account_email', 'version', 'updated_at', 'deleted_at'].includes(key)) {
+                allowed.push(key);
+            }
+        }
+    }
+
+    for (const c of allowed) {
         cols.push(c);
         vals.push(row[c] === undefined ? null : row[c]);
     }
