@@ -1,0 +1,63 @@
+name: Restrict Contributors
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: ['**']
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  check-contributor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validar contribuidor autorizado
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const allowedUsers = [
+              'sua7dev',
+              'sua',
+              'gustav0h2o',
+              'gustav0h20',
+              'gustavoh2o',
+              'gustavoh20',
+              'gustavo'
+            ];
+            
+            // Validar Pull Request
+            if (context.payload.pull_request) {
+              const prAuthor = context.payload.pull_request.user.login.toLowerCase();
+              if (!allowedUsers.includes(prAuthor)) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: `🚫 **Acceso restringido**: Hola @${context.payload.pull_request.user.login}. Este repositorio es de desarrollo privado y exclusivo para **@Sua7Dev** y **@Gustav0H2O**. No se admiten contribuciones externas.`
+                });
+                
+                await github.rest.pulls.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: context.issue.number,
+                  state: 'closed'
+                });
+                
+                core.setFailed(`Pull Request cerrado automáticamente: @${context.payload.pull_request.user.login} no está autorizado como contribuidor.`);
+                return;
+              }
+            }
+            
+            // Validar Push
+            if (context.eventName === 'push') {
+              const actor = context.actor.toLowerCase();
+              if (!allowedUsers.includes(actor)) {
+                core.setFailed(`Push bloqueado: @${context.actor} no tiene permisos de contribución.`);
+              }
+            }
