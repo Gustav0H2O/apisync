@@ -24,7 +24,7 @@ export function verifyToken(req) {
 
     const token = authHeader.split(' ')[1];
     try {
-        return jwt.verify(token, JWT_SECRET);
+        return jwt.verify(token, process.env.JWT_SECRET || JWT_SECRET);
     } catch (err) {
         return null;
     }

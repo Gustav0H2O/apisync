@@ -125,7 +125,92 @@ export const INFRA_DDL = [
     )`,
     `CREATE INDEX IF NOT EXISTS idx_change_log_account_seq
         ON change_log (account_email, seq)`,
+    `CREATE TABLE IF NOT EXISTS app_notifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, target_email TEXT,
+        condition_key TEXT, condition_op TEXT, condition_val TEXT,
+        title TEXT DEFAULT 'Notificación', message TEXT NOT NULL,
+        type TEXT DEFAULT 'info', is_active INTEGER DEFAULT 1,
+        show_once INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        start_date TEXT, end_date TEXT, repeat_interval INTEGER DEFAULT 0,
+        route TEXT, action_data TEXT
+    )`,
 ];
+
+// Cache en memoria de columnas por tabla remota para evitar consultas repetitivas
+const _tableColumnsCache = new Map();
+const CACHE_TTL_MS = 60 * 1000;
+
+export async function getTableColumns(connection, clientTable) {
+    const spec = TABLE_SPECS[clientTable];
+    if (!spec) return new Set();
+
+    const cached = _tableColumnsCache.get(spec.remote);
+    const now = Date.now();
+    if (cached && (now - cached.time < CACHE_TTL_MS)) {
+        return cached.cols;
+    }
+
+    try {
+        const [rows] = await connection.execute(`PRAGMA table_info(${spec.remote})`);
+        const cols = new Set((rows || []).map(r => r.name));
+        _tableColumnsCache.set(spec.remote, { cols, time: now });
+        return cols;
+    } catch (e) {
+        return new Set();
+    }
+}
+
+/**
+ * Auto-migración dinámica de columnas (Escalabilidad Horizontal y Vertical).
+ * Si FactuFlow agrega campos a su esquema, se agregan automáticamente a Turso
+ * mediante ALTER TABLE ADD COLUMN sin interrumpir la sincronización ni requerir
+ * migraciones manuales en producción.
+ */
+export async function autoMigrateColumns(connection, clientTable, sampleRow = null) {
+    const spec = TABLE_SPECS[clientTable];
+    const schema = TABLE_SCHEMAS[clientTable];
+    if (!spec) return new Set();
+
+    const currentCols = await getTableColumns(connection, clientTable);
+    if (!currentCols.size) return currentCols;
+
+    // 1. Columnas declaradas en schema pero faltantes en la BD física
+    if (schema) {
+        for (const [col, type] of Object.entries(schema)) {
+            if (!currentCols.has(col)) {
+                try {
+                    await connection.execute(`ALTER TABLE ${spec.remote} ADD COLUMN ${col} ${type}`);
+                    currentCols.add(col);
+                    console.log(`✨ [AutoMigrate] Columna agregada a ${spec.remote}: ${col} ${type}`);
+                } catch (err) {
+                    console.warn(`⚠️ [AutoMigrate] No se pudo agregar columna ${col} a ${spec.remote}: ${err.message}`);
+                }
+            }
+        }
+    }
+
+    // 2. Escalabilidad dinámica: si sampleRow trae campos nuevos válidos
+    if (sampleRow && typeof sampleRow === 'object') {
+        for (const [key, val] of Object.entries(sampleRow)) {
+            if (!/^[a-zA-Z0-9_]+$/.test(key)) continue;
+            if (currentCols.has(key)) continue;
+            if (['uuid', 'account_email', 'version', 'updated_at', 'deleted_at'].includes(key)) continue;
+
+            const inferredType = typeof val === 'number'
+                ? (Number.isInteger(val) ? 'INTEGER' : 'REAL')
+                : 'TEXT';
+            try {
+                await connection.execute(`ALTER TABLE ${spec.remote} ADD COLUMN ${key} ${inferredType}`);
+                currentCols.add(key);
+                console.log(`✨ [AutoMigrate Dynamic] Columna dinámica agregada a ${spec.remote}: ${key} ${inferredType}`);
+            } catch (err) {
+                // Posible carrera con otra lambda concurrente
+            }
+        }
+    }
+
+    return currentCols;
+}
 
 /**
  * Asegura espejos + infraestructura para las tablas del cliente indicadas.
@@ -133,7 +218,7 @@ export const INFRA_DDL = [
  * se omite igual que con esquema viejo, ver _push.js).
  * Devuelve la lista de tablas aseguradas.
  */
-export async function ensureMirrorTables(connection, clientTables) {
+export async function ensureMirrorTables(connection, clientTables, changes = null) {
     const ensured = [];
     for (const table of clientTables) {
         const ddl = mirrorDdl(table);
@@ -141,6 +226,8 @@ export async function ensureMirrorTables(connection, clientTables) {
         try {
             await connection.execute(ddl, []);
             ensured.push(table);
+            const sample = (changes && Array.isArray(changes[table]) && changes[table][0]) || null;
+            await autoMigrateColumns(connection, table, sample);
         } catch (e) {
             console.warn(`⚠️ [Ensure] No se pudo asegurar ${table}: ${e.message}`);
         }
