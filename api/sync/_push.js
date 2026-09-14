@@ -4,6 +4,7 @@ import {
     TABLE_SPECS, TABLE_ORDER, toNumber,
     changeLogStatements, ensureCursorStatement,
 } from './_tables.js';
+import { ensureMirrorTables } from './_ensure.js';
 import { sendToLicense } from '../_fcm.js';
 
 /**
@@ -55,6 +56,14 @@ export default async function handler(req, res) {
     let connection;
     try {
         connection = getConnection();
+
+        // Escalabilidad: auto-aprovisiona los espejos de las tablas que trae
+        // el push (CREATE TABLE IF NOT EXISTS, no-op si ya existen). Agregar
+        // una tabla al sync ya no exige migraciones manuales en Turso.
+        await ensureMirrorTables(
+            connection,
+            Object.keys(changes).filter((t) => TABLE_SPECS[t]),
+        );
 
         // ─── Pre-lecturas por tabla (fuera del batch; el batch es write-atomic
         //     y la política es idempotente ante carreras) ────────────────────
