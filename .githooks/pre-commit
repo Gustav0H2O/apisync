@@ -1,0 +1,40 @@
+#!/bin/sh
+# Hook para restringir contribuciones a Gustavo y Sua7Dev
+
+ALLOWED_EMAILS="newpersonal98@gmail.com thekill.noobs7@gmail.com"
+ALLOWED_USERS="gustav0h2o gustav0h20 gustavoh2o gustavoh20 gustavo sua sua7dev"
+
+AUTHOR_EMAIL=$(git config user.email | tr '[:upper:]' '[:lower:]')
+AUTHOR_NAME=$(git config user.name | tr '[:upper:]' '[:lower:]')
+
+EMAIL_VALID=0
+for email in $ALLOWED_EMAILS; do
+  if [ "$AUTHOR_EMAIL" = "$email" ]; then
+    EMAIL_VALID=1
+    break
+  fi
+done
+
+USER_VALID=0
+for user in $ALLOWED_USERS; do
+  if [ "$AUTHOR_NAME" = "$user" ]; then
+    USER_VALID=1
+    break
+  fi
+done
+
+if [ $EMAIL_VALID -eq 0 ] && [ $USER_VALID -eq 0 ]; then
+  echo "===================================================================="
+  echo "❌ ERROR: Contribución bloqueada."
+  echo "Este repositorio solo permite contribuciones de:"
+  echo "  - Gustavo (@GustavoH20 - newpersonal98@gmail.com)"
+  echo "  - Sua7Dev (@Sua7Dev - thekill.noobs7@gmail.com)"
+  echo ""
+  echo "Tu configuración actual es:"
+  echo "  user.name:  $(git config user.name)"
+  echo "  user.email: $(git config user.email)"
+  echo "===================================================================="
+  exit 1
+fi
+
+exit 0
