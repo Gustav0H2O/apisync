@@ -16,7 +16,7 @@ process.env.TURSO_TOKEN = TURSO_TOKEN;
 
 const EMAIL = 'turso-live-fleet@factuflow.dev';
 const DEVICE = 'turso-live-dev-1';
-const LIC = 'lic-turso-live-1';
+const LIC = 'FACTU-TEST-FLEET-LIVE';
 
 function req({ method = 'POST', body = {}, query = {}, headers = {} }) {
   const token = jwt.sign(
@@ -38,8 +38,8 @@ function res() {
 }
 
 function assert(cond, msg) {
-  if (!cond) { console.error('❌ FAIL:', msg); process.exit(1); }
-  console.log('✅ OK:', msg);
+  if (!cond) { console.error('FAIL:', msg); process.exit(1); }
+  console.log('OK:', msg);
 }
 
 console.log('========================================================');
@@ -49,16 +49,22 @@ console.log('========================================================');
 const db = getConnection();
 
 // Limpieza de corridas anteriores de prueba
-console.log('\n[1] Limpiando datos previos de prueba en Turso...');
+console.log('\n[1] Preparando entorno de prueba en Turso Cloud...');
 await db.execute('DELETE FROM change_log WHERE account_email = ?', [EMAIL]);
 await db.execute('DELETE FROM account_cursor WHERE account_email = ?', [EMAIL]);
 await db.execute('DELETE FROM sync_invoices WHERE account_email = ?', [EMAIL]);
 await db.execute('DELETE FROM sync_clients WHERE account_email = ?', [EMAIL]);
 await db.execute('DELETE FROM devices WHERE device_id = ?', [DEVICE]);
+await db.execute('DELETE FROM licencias WHERE license_key = ?', [LIC]);
+await db.execute('DELETE FROM clientes WHERE email = ?', [EMAIL]);
 
-// Registrar dispositivo de prueba
-await db.execute('INSERT INTO devices (device_id, revoked, license_key, name) VALUES (?, 0, ?, ?)', [DEVICE, LIC, 'Fleet Live Test Device']);
-console.log('Dispositivo registrado en Turso Cloud.');
+// Crear cliente y licencia de prueba para respetar foreign keys de Turso
+const [cliRes] = await db.execute('INSERT INTO clientes (email, business_name, rif) VALUES (?, ?, ?)', [EMAIL, 'Fleet Live Corp', 'J-00000000-0']);
+const clientId = cliRes.insertId;
+
+await db.execute('INSERT INTO licencias (cliente_id, license_key, tipo) VALUES (?, ?, ?)', [clientId, LIC, 'UNIQUE']);
+await db.execute('INSERT INTO devices (device_id, license_key, name) VALUES (?, ?, ?)', [DEVICE, LIC, 'Fleet Live Test Device']);
+console.log('Cliente, licencia y dispositivo registrados correctamente en Turso Cloud.');
 
 // Asegurar tablas
 await ensureMirrorTables(db, Object.keys(TABLE_SPECS));
@@ -141,6 +147,8 @@ await db.execute('DELETE FROM change_log WHERE account_email = ?', [EMAIL]);
 await db.execute('DELETE FROM account_cursor WHERE account_email = ?', [EMAIL]);
 await db.execute('DELETE FROM sync_invoices WHERE account_email = ?', [EMAIL]);
 await db.execute('DELETE FROM devices WHERE device_id = ?', [DEVICE]);
+await db.execute('DELETE FROM licencias WHERE license_key = ?', [LIC]);
+await db.execute('DELETE FROM clientes WHERE email = ?', [EMAIL]);
 console.log('Limpieza completada en Turso.');
 
 console.log('\n========================================================');
