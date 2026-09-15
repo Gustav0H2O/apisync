@@ -82,7 +82,23 @@ async function handleConfirm(req, res) {
         
         await queryDB(`INSERT INTO devices (device_id, license_key, name, last_seen, paired_at, revoked) VALUES (?, ?, ?, datetime('now'), datetime('now'), 0) ON CONFLICT(device_id) DO UPDATE SET revoked = 0, license_key = excluded.license_key, name = excluded.name, last_seen = datetime('now')`, [device_id, licenseKey, device_name || 'Nuevo Dispositivo']);
         await queryDB(`UPDATE pairing_sessions SET confirmed = 1 WHERE session_id = ?`, [session_id]);
-        return res.status(200).json({ license_key: licenseKey, confirm: true });
+        
+        const licRows = await queryDB(
+            `SELECT c.email, l.tipo AS license_type, ds.fecha_vencimiento AS saas_expiration 
+             FROM licencias l 
+             JOIN clientes c ON l.cliente_id = c.id 
+             LEFT JOIN detalles_saas ds ON ds.licencia_id = l.id
+             WHERE l.license_key = ? LIMIT 1`, 
+            [licenseKey]
+        );
+        const licData = licRows[0] || {};
+        return res.status(200).json({ 
+            license_key: licenseKey, 
+            email: licData.email,
+            license_type: licData.license_type,
+            saas_expiration: licData.saas_expiration,
+            confirm: true 
+        });
     } catch (e) { return res.status(500).json({ error: e.message }); }
 }
 
@@ -113,9 +129,23 @@ async function handleLink(req, res) {
 async function handleDeviceStatus(req, res) {
     const { device_id } = req.query;
     if (!device_id) return res.status(400).json({ error: 'Falta device_id' });
-    const rows = await queryDB(`SELECT d.license_key, c.email, l.tipo AS license_type FROM devices d JOIN licencias l ON d.license_key = l.license_key JOIN clientes c ON l.cliente_id = c.id WHERE d.device_id = ? AND d.revoked = 0 LIMIT 1`, [device_id]);
+    const rows = await queryDB(
+        `SELECT d.license_key, c.email, l.tipo AS license_type, ds.fecha_vencimiento AS saas_expiration 
+         FROM devices d 
+         JOIN licencias l ON d.license_key = l.license_key 
+         JOIN clientes c ON l.cliente_id = c.id 
+         LEFT JOIN detalles_saas ds ON ds.licencia_id = l.id
+         WHERE d.device_id = ? AND d.revoked = 0 LIMIT 1`, 
+        [device_id]
+    );
     if (!rows.length) return res.status(200).json({ authorized: false });
-    return res.status(200).json({ authorized: true, license_key: rows[0].license_key, email: rows[0].email, license_type: rows[0].license_type });
+    return res.status(200).json({ 
+        authorized: true, 
+        license_key: rows[0].license_key, 
+        email: rows[0].email, 
+        license_type: rows[0].license_type,
+        saas_expiration: rows[0].saas_expiration
+    });
 }
 
 async function handleDevicesList(req, res) {
