@@ -2,8 +2,10 @@ import changes from './sync/_changes.js';
 import cursor from './sync/_cursor.js';
 import pull from './sync/_pull.js';
 import push from './sync/_push.js';
+import { applyCors } from './_cors.js';
 
 export default async function handler(req, res) {
+    if (applyCors(req, res)) return;
     const { action } = req.query;
     if (action === 'changes') return changes(req, res);
     if (action === 'cursor') return cursor(req, res);

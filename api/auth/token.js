@@ -1,7 +1,7 @@
 import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
 import { queryDB } from '../_db.js';
-import { verifyToken, isDeviceRevoked } from '../_helpers.js';
+import { verifyToken, isDeviceRevoked, applyCors } from '../_helpers.js';
 
 const JWT_SECRET = process.env.JWT_SECRET;
 const TOKEN_EXPIRY = '1h';
@@ -65,7 +65,7 @@ async function handleGenerate(req, res) {
 }
 
 async function handleConfirm(req, res) {
-    const { session_id, secret, device_id, device_name } = req.body;
+    const { session_id, secret, device_id, device_name } = req.body || {};
     if (!session_id || !secret || !device_id) return res.status(400).json({ error: 'Faltan parámetros críticos (session_id, secret, device_id)' });
     try {
         const rows = await queryDB(`SELECT license_key FROM pairing_sessions WHERE session_id = ? AND secret = ? AND confirmed = 0 AND expires_at > CURRENT_TIMESTAMP`, [session_id, secret]);
@@ -117,7 +117,7 @@ async function handleStatus(req, res) {
 async function handleLink(req, res) {
     const user = await verifyToken(req);
     if (!user) return res.status(401).json({ error: 'No autorizado' });
-    const { target_device_id, name } = req.body;
+    const { target_device_id, name } = req.body || {};
     if (!target_device_id) return res.status(400).json({ error: 'Falta target_device_id' });
     const policy = await getLicensePolicy(user.licenseKey);
     const [active] = await queryDB(`SELECT COUNT(*) AS c FROM devices WHERE license_key = ? AND revoked = 0 AND device_id != ?`, [user.licenseKey, target_device_id]);
@@ -227,7 +227,7 @@ async function handleFcmRegister(req, res) {
 async function handleRename(req, res) {
     const user = await verifyToken(req);
     if (!user) return res.status(401).json({ error: 'No autorizado' });
-    const { device_id, name } = req.body;
+    const { device_id, name } = req.body || {};
     if (!device_id || !name) return res.status(400).json({ error: 'Faltan parámetros' });
     try {
         const result = await queryDB(`UPDATE devices SET name = ? WHERE device_id = ? AND license_key = ?`, [name, device_id, user.licenseKey]);
@@ -238,7 +238,7 @@ async function handleRename(req, res) {
 // --- HANDLER TOKEN (LOGIN) ---
 
 async function handleToken(req, res) {
-    const { license_key, device_id, name } = req.body;
+    const { license_key, device_id, name } = req.body || {};
     if (!license_key || !device_id) return res.status(400).json({ error: 'Faltan parámetros' });
     const rows = await queryDB(`SELECT l.id, l.tipo, c.email, ds.fecha_vencimiento FROM licencias l JOIN clientes c ON l.cliente_id = c.id LEFT JOIN detalles_saas ds ON ds.licencia_id = l.id WHERE l.license_key = ? AND l.usado = 1`, [license_key]);
     if (!rows.length) return res.status(401).json({ error: 'Licencia inválida o no activa' });
@@ -281,6 +281,7 @@ async function handleToken(req, res) {
 // --- MAIN HANDLER (ROUTER) ---
 
 export default async function handler(req, res) {
+    if (applyCors(req, res)) return;
     const { action } = req.query;
     const currentAction = action || 'token';
     try {

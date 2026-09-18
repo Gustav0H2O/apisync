@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import nodemailer from 'nodemailer';
 import { getConnection } from '../_db.js';
+import { applyCors } from '../_cors.js';
 
 // Rate-limit: 3 solicitudes/hora por email (mejor esfuerzo en memoria).
 const requestLog = new Map();
@@ -21,6 +22,7 @@ function rateLimited(email) {
  * filtrar si el email existe.
  */
 export default async function handler(req, res) {
+    if (applyCors(req, res)) return;
     if (req.method !== 'POST') return res.status(405).end();
 
     const email = String(req.body?.email || '').trim().toLowerCase();

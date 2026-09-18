@@ -1,11 +1,12 @@
 import { getConnection } from './_db.js';
-import { verifyToken, isDeviceRevoked } from './_helpers.js';
+import { verifyToken, isDeviceRevoked, applyCors } from './_helpers.js';
 
 export default async function handler(req, res) {
+    if (applyCors(req, res)) return;
     console.log(`🚀 [API] ${req.method} request received`);
     if (req.method !== 'POST') return res.status(405).end();
 
-    const { query, params, isActivation } = req.body;
+    const { query, params, isActivation } = req.body || {};
     
     const authHeader = req.headers.authorization;
     const isMaster = authHeader === `Bearer ${process.env.JWT_SECRET}`;

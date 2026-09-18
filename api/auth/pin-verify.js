@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { getConnection } from '../_db.js';
+import { applyCors } from '../_cors.js';
 
 /**
  * POST /api/auth/pin-verify  ← { email, code }
@@ -9,6 +10,7 @@ import { getConnection } from '../_db.js';
  * 5 intentos por código; la fila se borra al verificar con éxito.
  */
 export default async function handler(req, res) {
+    if (applyCors(req, res)) return;
     if (req.method !== 'POST') return res.status(405).end();
 
     const email = String(req.body?.email || '').trim().toLowerCase();

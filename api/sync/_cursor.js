@@ -1,5 +1,5 @@
 import { getConnection } from '../_db.js';
-import { verifyToken, requireJwtSecret } from '../_helpers.js';
+import { verifyToken, requireJwtSecret, applyCors } from '../_helpers.js';
 
 /**
  * GET /api/sync/cursor?since=<seq>&wait=<sec>  (auth JWT)
@@ -13,6 +13,7 @@ import { verifyToken, requireJwtSecret } from '../_helpers.js';
  * visible para la cuenta y `notif_active` = cuántas están activas).
  */
 export default async function handler(req, res) {
+    if (applyCors(req, res)) return;
     if (req.method !== 'GET') return res.status(405).end();
     if (!requireJwtSecret(res)) return;
 

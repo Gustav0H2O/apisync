@@ -1,5 +1,6 @@
 import { getConnection } from './_db.js';
 import { sendToTokens, fcmConfigured } from './_fcm.js';
+import { applyCors } from './_cors.js';
 
 /**
  * POST /api/push-notify   (solo administrador)
@@ -18,6 +19,7 @@ import { sendToTokens, fcmConfigured } from './_fcm.js';
  *   - target_email omitido → broadcast a TODOS los dispositivos.
  */
 export default async function handler(req, res) {
+    if (applyCors(req, res)) return;
     if (req.method !== 'POST') return res.status(405).end();
 
     const secret = process.env.ADMIN_PUSH_SECRET;

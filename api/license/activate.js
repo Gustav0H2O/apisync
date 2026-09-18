@@ -1,6 +1,6 @@
 import jwt from 'jsonwebtoken';
 import { getConnection } from '../_db.js';
-import { requireJwtSecret } from '../_helpers.js';
+import { requireJwtSecret, applyCors } from '../_helpers.js';
 import { signLicensePayload } from './_sign.js';
 
 const DEFAULT_MAX_DEVICES = 2;
@@ -30,6 +30,7 @@ function rateLimited(ip) {
  * re-activación (mismo correo) o a `already_used`.
  */
 export default async function handler(req, res) {
+    if (applyCors(req, res)) return;
     if (req.method !== 'POST') return res.status(405).end();
     if (!requireJwtSecret(res)) return;
 
