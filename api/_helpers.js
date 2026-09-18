@@ -1,6 +1,8 @@
 import jwt from 'jsonwebtoken';
 import { getConnection } from './_db.js';
 
+export { applyCors } from './_cors.js';
+
 const JWT_SECRET = process.env.JWT_SECRET;
 
 /**

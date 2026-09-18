@@ -1,5 +1,5 @@
 import { getConnection } from '../_db.js';
-import { verifyToken, isDeviceRevoked, requireJwtSecret } from '../_helpers.js';
+import { verifyToken, isDeviceRevoked, requireJwtSecret, applyCors } from '../_helpers.js';
 import {
     TABLE_SPECS, TABLE_ORDER, toNumber,
     changeLogStatements, ensureCursorStatement,
@@ -29,6 +29,7 @@ import { sendToLicense } from '../_fcm.js';
  *     cursor, TODO dentro de un único batch atómico.
  */
 export default async function handler(req, res) {
+    if (applyCors(req, res)) return;
     if (req.method !== 'POST') return res.status(405).end();
     if (!requireJwtSecret(res)) return;
 

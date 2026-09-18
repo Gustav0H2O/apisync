@@ -1,11 +1,12 @@
 import { getConnection } from './_db.js';
-import { verifyToken, isDeviceRevoked } from './_helpers.js';
+import { verifyToken, isDeviceRevoked, applyCors } from './_helpers.js';
 
 /**
  * GET /api/notifications
  * Recupera solo las notificaciones activas para el usuario.
  */
 export default async function handler(req, res) {
+    if (applyCors(req, res)) return;
     if (req.method !== 'GET' && req.method !== 'POST') return res.status(405).end();
 
     const user = verifyToken(req);

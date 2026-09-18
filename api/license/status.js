@@ -1,5 +1,5 @@
 import { getConnection } from '../_db.js';
-import { verifyToken, isDeviceRevoked, requireJwtSecret } from '../_helpers.js';
+import { verifyToken, isDeviceRevoked, requireJwtSecret, applyCors } from '../_helpers.js';
 import { signLicensePayload } from './_sign.js';
 
 /**
@@ -13,6 +13,7 @@ import { signLicensePayload } from './_sign.js';
  * cliente la distinga de una sesión expirada.
  */
 export default async function handler(req, res) {
+    if (applyCors(req, res)) return;
     if (req.method !== 'GET') return res.status(405).end();
     if (!requireJwtSecret(res)) return;
 

@@ -1,5 +1,5 @@
 import { getConnection } from './_db.js';
-import { verifyToken, isDeviceRevoked } from './_helpers.js';
+import { verifyToken, isDeviceRevoked, applyCors } from './_helpers.js';
 import { changeLogStatements, ensureCursorStatement, TABLE_SPECS } from './sync/_tables.js';
 import { sendToLicense } from './_fcm.js';
 
@@ -33,6 +33,7 @@ import Busboy from 'busboy';
  * Soporta JSON tradicional y Multipart/Form-Data para Blobs.
  */
 export default async function handler(req, res) {
+    if (applyCors(req, res)) return;
     if (req.method !== 'POST') return res.status(405).end();
 
     // Validación de tamaño de payload (10MB) para prevenir ataques DoS o payloads corruptos gigantes

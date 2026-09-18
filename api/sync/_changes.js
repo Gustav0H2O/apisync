@@ -1,5 +1,5 @@
 import { getConnection } from '../_db.js';
-import { verifyToken, isDeviceRevoked, requireJwtSecret } from '../_helpers.js';
+import { verifyToken, isDeviceRevoked, requireJwtSecret, applyCors } from '../_helpers.js';
 import { TABLE_SPECS } from './_tables.js';
 
 const MAX_LIMIT = 500;
@@ -14,6 +14,7 @@ const MAX_LIMIT = 500;
  * aplicar el lote con éxito.
  */
 export default async function handler(req, res) {
+    if (applyCors(req, res)) return;
     if (req.method !== 'GET') return res.status(405).end();
     if (!requireJwtSecret(res)) return;
 
