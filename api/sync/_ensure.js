@@ -110,6 +110,15 @@ export function mirrorDdl(clientTable) {
     const schema = TABLE_SCHEMAS[clientTable];
     
     if (spec && schema) {
+        if (spec.conflictTarget === '(account_email, uuid)') {
+            const cols = { ...COMMON_COLS };
+            delete cols.uuid;
+            for (const c of spec.cols) {
+                cols[c] = schema[c] || 'TEXT';
+            }
+            const defs = ['uuid TEXT', ...Object.entries(cols).map(([name, type]) => `${name} ${type}`), 'PRIMARY KEY (account_email, uuid)'];
+            return `CREATE TABLE IF NOT EXISTS ${spec.remote} (${defs.join(', ')})`;
+        }
         const base = spec.accountScoped ? COMMON_COLS : COMMON_COLS_CHILD;
         const cols = { ...base };
         for (const c of spec.cols) {
