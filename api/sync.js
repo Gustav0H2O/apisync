@@ -354,10 +354,11 @@ export default async function handler(req, res) {
                 if (!item || !item.uuid) continue;
                 const allCols = ['uuid', 'account_email', ...spec.cols, 'deleted_at', 'version', 'updated_at'];
                 const updatable = [...spec.cols, 'deleted_at', 'updated_at', 'version'];
+                const conflictTarget = spec.conflictTarget || '(uuid)';
                 batchStatements.push({
                     sql: `INSERT INTO ${spec.remote} (${allCols.join(', ')})
                           VALUES (${allCols.map(() => '?').join(', ')})
-                          ON CONFLICT(uuid) DO UPDATE SET
+                          ON CONFLICT ${conflictTarget} DO UPDATE SET
                           ${updatable.map(c => `${c} = CASE WHEN excluded.version >= ${spec.remote}.version THEN excluded.${c} ELSE ${spec.remote}.${c} END`).join(',\n                          ')}`,
                     args: mapP([item.uuid, user.email, ...spec.cols.map(c => item[c]), item.deleted_at, item.version, item.updated_at]),
                 });
