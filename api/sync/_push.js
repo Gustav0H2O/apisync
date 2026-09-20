@@ -98,18 +98,23 @@ export default async function handler(req, res) {
             const placeholders = uuids.map(() => '?').join(',');
             let existingRows;
             try {
-                if (spec.accountScoped) {
+                if (spec.conflictTarget && spec.conflictTarget.includes('account_email')) {
                     [existingRows] = await connection.execute(
                         `SELECT * FROM ${spec.remote} WHERE account_email = ? AND uuid IN (${placeholders})`,
                         [user.email, ...uuids]
+                    );
+                } else if (spec.accountScoped) {
+                    [existingRows] = await connection.execute(
+                        `SELECT * FROM ${spec.remote} WHERE uuid IN (${placeholders})`,
+                        [...uuids]
                     );
                 } else {
                     [existingRows] = await connection.execute(
                         `SELECT i.*, p.account_email AS parent_account, p.sealed_at AS parent_sealed
                          FROM ${spec.remote} i
                          LEFT JOIN ${spec.parent.table} p ON p.uuid = i.${spec.parent.fk}
-                         WHERE p.account_email = ? AND i.uuid IN (${placeholders})`,
-                        [user.email, ...uuids]
+                         WHERE i.uuid IN (${placeholders})`,
+                        [...uuids]
                     );
                 }
             } catch (e) {
