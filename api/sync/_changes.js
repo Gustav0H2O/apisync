@@ -65,7 +65,10 @@ export default async function handler(req, res) {
                 notificationIds.add(String(entry.row_uuid));
                 continue;
             }
-            if (!TABLE_SPECS[table]) continue; // tabla desconocida: ignorar
+            // Validar que el nombre de tabla sea un identificador seguro
+            const safeTable = String(table || '').toLowerCase().trim();
+            if (!/^[a-z][a-z0-9_]{1,40}$/.test(safeTable)) continue;
+
             if (!uuidsByTable.has(table)) uuidsByTable.set(table, new Set());
             uuidsByTable.get(table).add(String(entry.row_uuid));
         }
@@ -73,25 +76,30 @@ export default async function handler(req, res) {
         const changes = {};
         for (const [table, uuidSet] of uuidsByTable) {
             const spec = TABLE_SPECS[table];
+            const remote = spec?.remote || `sync_${table.toLowerCase().trim()}`;
             const uuids = [...uuidSet];
             const placeholders = uuids.map(() => '?').join(',');
 
             let sql;
             let args;
-            if (spec.accountScoped) {
-                sql = `SELECT * FROM ${spec.remote}
+            if (!spec || spec.accountScoped) {
+                sql = `SELECT * FROM ${remote}
                        WHERE account_email = ? AND uuid IN (${placeholders})`;
                 args = [user.email, ...uuids];
             } else {
-                // invoice_items: el alcance de cuenta viene por la factura padre.
-                sql = `SELECT i.* FROM ${spec.remote} i
+                // invoice_items: el alcance de cuenta viene por la factura padre si no tiene propio.
+                sql = `SELECT i.* FROM ${remote} i
                        JOIN ${spec.parent.table} p ON p.uuid = i.${spec.parent.fk}
                        WHERE p.account_email = ? AND i.uuid IN (${placeholders})`;
                 args = [user.email, ...uuids];
             }
 
-            const [rows] = await connection.execute(sql, args);
-            if (rows.length) changes[table] = rows;
+            try {
+                const [rows] = await connection.execute(sql, args);
+                if (rows && rows.length) changes[table] = rows;
+            } catch (e) {
+                console.warn(`⚠️ [Changes Feed] No se pudo consultar ${remote}: ${e.message}`);
+            }
         }
 
         // Notificaciones referidas por el feed — INCLUIDAS las desactivadas
@@ -113,28 +121,22 @@ export default async function handler(req, res) {
 
         if (profileChanged) {
             const [profileRows] = await connection.execute(
-                `SELECT business_name, slogan, rif, address, user_name, email, user_phone,
-                        accent_color, header_color, exchange_rate_mode, working_currency,
-                        display_currency, print_currency, manual_rate, use_latest_rate,
-                        usd_rate_latest, usd_rate_previous, show_banner_invoice,
-                        show_banner_quote, show_banner_delivery, banner_color,
-                        show_exchange_rate, config_style, products_by_stock,
-                        catalog_document_title, catalog_layout_style, catalog_logo_path,
-                        catalog_logo_position, catalog_banner_color, catalog_header_color,
-                        catalog_show_stock, catalog_show_price_bs, catalog_show_price_usd,
-                        catalog_show_iva, catalog_show_address, catalog_show_phone,
-                        catalog_show_slogan, catalog_show_exchange_rate,
-                        catalog_show_product_code, catalog_show_product_description,
-                        catalog_show_promos, catalog_show_wholesale, catalog_footer_text,
-                        catalog_grayscale_mode, invoice_print_currency,
-                        estimate_print_currency, delivery_note_print_currency,
-                        COALESCE(profile_change_limit, 3) AS profile_change_limit,
-                        COALESCE(profile_change_count, 0) AS profile_change_count,
-                        version, updated_at
+                `SELECT *, COALESCE(profile_change_limit, 3) AS profile_change_limit,
+                         COALESCE(profile_change_count, 0) AS profile_change_count
                  FROM clientes WHERE email = ? LIMIT 1`,
                 [user.email]
             );
             const profile = profileRows[0] || null;
+            if (profile && profile.config_data) {
+                try {
+                    const parsed = typeof profile.config_data === 'string'
+                        ? JSON.parse(profile.config_data)
+                        : profile.config_data;
+                    if (parsed && typeof parsed === 'object') {
+                        Object.assign(profile, parsed);
+                    }
+                } catch (_) {}
+            }
             if (profile && profile.catalog_logo_path) {
                 const logo = profile.catalog_logo_path;
                 if (logo instanceof Buffer) {
