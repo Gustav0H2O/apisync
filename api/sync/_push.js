@@ -3,6 +3,7 @@ import { verifyToken, isDeviceRevoked, requireJwtSecret, applyCors } from '../_h
 import {
     TABLE_SPECS, TABLE_ORDER, toNumber,
     changeLogStatements, ensureCursorStatement,
+    resolveTableOrder, CORE_TABLE_RULES,
 } from './_tables.js';
 import { ensureMirrorTables, getTableColumns } from './_ensure.js';
 import { sendToLicense } from '../_fcm.js';
@@ -58,21 +59,33 @@ export default async function handler(req, res) {
     try {
         connection = getConnection();
 
-        // Escalabilidad: auto-aprovisiona los espejos de las tablas que trae
-        // el push (CREATE TABLE IF NOT EXISTS, no-op si ya existen). Agregar
-        // una tabla al sync ya no exige migraciones manuales en Turso.
+        // Escalabilidad horizontal y vertical: auto-aprovisiona los espejos de
+        // las tablas que trae el push de forma segura y sanitizada.
+        const incomingTableNames = Object.keys(changes)
+            .map(t => t.trim())
+            .filter(t => /^[a-z][a-z0-9_]{1,40}$/i.test(t));
+
         await ensureMirrorTables(
             connection,
-            Object.keys(changes).filter((t) => TABLE_SPECS[t]),
+            incomingTableNames,
             changes,
         );
 
-        // ─── Pre-lecturas por tabla (fuera del batch; el batch es write-atomic
-        //     y la política es idempotente ante carreras) ────────────────────
-        for (const table of TABLE_ORDER) {
+        // ─── Pre-lecturas por tabla con resolución topológica (anti-FK crash) ──
+        const orderedTables = resolveTableOrder(incomingTableNames);
+        for (const table of orderedTables) {
             const rows = changes[table];
             if (!Array.isArray(rows) || !rows.length) continue;
-            const spec = TABLE_SPECS[table];
+
+            const rule = CORE_TABLE_RULES[table] || {};
+            const spec = TABLE_SPECS[table] || {
+                remote: `sync_${table.toLowerCase().trim()}`,
+                accountScoped: true,
+                cols: Object.keys(rows[0] || {}).filter(c => !['uuid', 'account_email', 'version', 'updated_at', 'deleted_at'].includes(c)),
+                businessKey: rule.businessKey || null,
+                sealed: rule.sealed || false,
+                appendOnly: rule.appendOnly || false,
+            };
             const physicalCols = await getTableColumns(connection, table);
 
             const uuids = rows.map(r => String(r.uuid || '')).filter(Boolean);
@@ -312,7 +325,15 @@ function upsertStatement(spec, email, row, uuid, version, now, physicalCols = nu
 
     for (const c of allowed) {
         cols.push(c);
-        vals.push(row[c] === undefined ? null : row[c]);
+        let val = row[c];
+        if (val !== null && typeof val === 'object') {
+            try {
+                val = JSON.stringify(val);
+            } catch (err) {
+                val = String(val);
+            }
+        }
+        vals.push(val === undefined ? null : val);
     }
     cols.push('version', 'updated_at', 'deleted_at');
     vals.push(version, now, row.deleted_at === undefined ? null : row.deleted_at);
@@ -371,56 +392,83 @@ async function buildProfileStatements(connection, email, profile, statements) {
         return 'change_limit';
     }
 
+    // Introspección física para soportar config_data en JSON
+    let hasConfigDataCol = false;
+    try {
+        const [infoRows] = await connection.execute('PRAGMA table_info(clientes)');
+        hasConfigDataCol = infoRows.some(r => r.name === 'config_data');
+    } catch (_) {}
+
+    // Empaquetar todas las propiedades no identitarias en JSON para extensibilidad infinita
+    const configDataObj = {};
+    for (const [k, v] of Object.entries(profile)) {
+        if (!['business_name', 'slogan', 'rif', 'address', 'user_name', 'user_phone', 'version', 'email'].includes(k)) {
+            configDataObj[k] = v;
+        }
+    }
+    const configDataJson = JSON.stringify(configDataObj);
+
     const mapP = (arr) => arr.map(v => v === undefined ? null : v);
+    
+    let updateSql = `UPDATE clientes SET
+            business_name = ?, slogan = ?, rif = ?, address = ?, user_name = ?,
+            user_phone = ?, accent_color = ?, header_color = ?, version = ?,
+            exchange_rate_mode = ?, working_currency = ?, display_currency = ?,
+            print_currency = ?, invoice_print_currency = ?, estimate_print_currency = ?,
+            delivery_note_print_currency = ?, manual_rate = ?, use_latest_rate = ?,
+            usd_rate_latest = ?, usd_rate_previous = ?, show_banner_invoice = ?,
+            show_banner_quote = ?, show_banner_delivery = ?, banner_color = ?,
+            show_exchange_rate = ?, config_style = ?, products_by_stock = ?,
+            catalog_document_title = ?, catalog_layout_style = ?,
+            catalog_logo_path = CASE WHEN ? = 1 THEN NULL ELSE catalog_logo_path END,
+            catalog_logo_position = ?, catalog_banner_color = ?, catalog_header_color = ?,
+            catalog_show_stock = ?, catalog_show_price_bs = ?, catalog_show_price_usd = ?,
+            catalog_show_iva = ?, catalog_show_address = ?, catalog_show_phone = ?,
+            catalog_show_slogan = ?, catalog_show_exchange_rate = ?,
+            catalog_show_product_code = ?, catalog_show_product_description = ?,
+            catalog_show_promos = ?, catalog_show_wholesale = ?,
+            catalog_footer_text = ?, catalog_grayscale_mode = ?,
+            history_new_button_action = ?, history_clients_button_action = ?,
+            profile_change_count = ?`;
+
+    const argsList = [
+        profile.business_name, profile.slogan, profile.rif, profile.address,
+        profile.user_name, profile.user_phone, profile.accent_color,
+        profile.header_color, incomingVersion, profile.exchange_rate_mode,
+        profile.working_currency, profile.display_currency, profile.print_currency,
+        profile.invoice_print_currency, profile.estimate_print_currency,
+        profile.delivery_note_print_currency, profile.manual_rate,
+        profile.use_latest_rate, profile.usd_rate_latest, profile.usd_rate_previous,
+        profile.show_banner_invoice, profile.show_banner_quote,
+        profile.show_banner_delivery, profile.banner_color,
+        profile.show_exchange_rate, profile.config_style,
+        (profile.products_by_stock !== undefined) ? profile.products_by_stock : 1,
+        profile.catalog_document_title, profile.catalog_layout_style,
+        profile.clear_catalog_logo ? 1 : 0,
+        profile.catalog_logo_position, profile.catalog_banner_color,
+        profile.catalog_header_color, profile.catalog_show_stock,
+        profile.catalog_show_price_bs, profile.catalog_show_price_usd,
+        profile.catalog_show_iva, profile.catalog_show_address,
+        profile.catalog_show_phone, profile.catalog_show_slogan,
+        profile.catalog_show_exchange_rate, profile.catalog_show_product_code,
+        profile.catalog_show_product_description, profile.catalog_show_promos,
+        profile.catalog_show_wholesale, profile.catalog_footer_text,
+        profile.catalog_grayscale_mode, profile.history_new_button_action,
+        profile.history_clients_button_action,
+        identityChanged ? count + 1 : count,
+    ];
+
+    if (hasConfigDataCol) {
+        updateSql += `, config_data = json_patch(COALESCE(config_data, '{}'), ?)`;
+        argsList.push(configDataJson);
+    }
+
+    updateSql += `, updated_at = CURRENT_TIMESTAMP WHERE email = ? AND version < ?`;
+    argsList.push(email, incomingVersion);
+
     statements.push({
-        sql: `UPDATE clientes SET
-                business_name = ?, slogan = ?, rif = ?, address = ?, user_name = ?,
-                user_phone = ?, accent_color = ?, header_color = ?, version = ?,
-                exchange_rate_mode = ?, working_currency = ?, display_currency = ?,
-                print_currency = ?, invoice_print_currency = ?, estimate_print_currency = ?,
-                delivery_note_print_currency = ?, manual_rate = ?, use_latest_rate = ?,
-                usd_rate_latest = ?, usd_rate_previous = ?, show_banner_invoice = ?,
-                show_banner_quote = ?, show_banner_delivery = ?, banner_color = ?,
-                show_exchange_rate = ?, config_style = ?, products_by_stock = ?,
-                catalog_document_title = ?, catalog_layout_style = ?,
-                catalog_logo_path = CASE WHEN ? = 1 THEN NULL ELSE catalog_logo_path END,
-                catalog_logo_position = ?, catalog_banner_color = ?, catalog_header_color = ?,
-                catalog_show_stock = ?, catalog_show_price_bs = ?, catalog_show_price_usd = ?,
-                catalog_show_iva = ?, catalog_show_address = ?, catalog_show_phone = ?,
-                catalog_show_slogan = ?, catalog_show_exchange_rate = ?,
-                catalog_show_product_code = ?, catalog_show_product_description = ?,
-                catalog_show_promos = ?, catalog_show_wholesale = ?,
-                catalog_footer_text = ?, catalog_grayscale_mode = ?,
-                history_new_button_action = ?, history_clients_button_action = ?,
-                profile_change_count = ?, updated_at = CURRENT_TIMESTAMP
-              WHERE email = ? AND version < ?`,
-        args: mapP([
-            profile.business_name, profile.slogan, profile.rif, profile.address,
-            profile.user_name, profile.user_phone, profile.accent_color,
-            profile.header_color, incomingVersion, profile.exchange_rate_mode,
-            profile.working_currency, profile.display_currency, profile.print_currency,
-            profile.invoice_print_currency, profile.estimate_print_currency,
-            profile.delivery_note_print_currency, profile.manual_rate,
-            profile.use_latest_rate, profile.usd_rate_latest, profile.usd_rate_previous,
-            profile.show_banner_invoice, profile.show_banner_quote,
-            profile.show_banner_delivery, profile.banner_color,
-            profile.show_exchange_rate, profile.config_style,
-            (profile.products_by_stock !== undefined) ? profile.products_by_stock : 1,
-            profile.catalog_document_title, profile.catalog_layout_style,
-            profile.clear_catalog_logo ? 1 : 0,
-            profile.catalog_logo_position, profile.catalog_banner_color,
-            profile.catalog_header_color, profile.catalog_show_stock,
-            profile.catalog_show_price_bs, profile.catalog_show_price_usd,
-            profile.catalog_show_iva, profile.catalog_show_address,
-            profile.catalog_show_phone, profile.catalog_show_slogan,
-            profile.catalog_show_exchange_rate, profile.catalog_show_product_code,
-            profile.catalog_show_product_description, profile.catalog_show_promos,
-            profile.catalog_show_wholesale, profile.catalog_footer_text,
-            profile.catalog_grayscale_mode, profile.history_new_button_action,
-            profile.history_clients_button_action,
-            identityChanged ? count + 1 : count,
-            email, incomingVersion,
-        ]),
+        sql: updateSql,
+        args: mapP(argsList),
     });
     statements.push(...changeLogStatements(email, 'profile', email, 'upsert'));
     return 'applied';

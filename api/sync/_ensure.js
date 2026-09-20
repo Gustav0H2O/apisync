@@ -103,16 +103,26 @@ export const TABLE_SCHEMAS = {
 };
 
 export function mirrorDdl(clientTable) {
+    const safeTable = String(clientTable || '').toLowerCase().trim();
+    if (!/^[a-z][a-z0-9_]{1,40}$/.test(safeTable)) return null;
+
     const spec = TABLE_SPECS[clientTable];
     const schema = TABLE_SCHEMAS[clientTable];
-    if (!spec || !schema) return null;
-    const base = spec.accountScoped ? COMMON_COLS : COMMON_COLS_CHILD;
-    const cols = { ...base };
-    for (const c of spec.cols) {
-        cols[c] = schema[c] || 'TEXT';
+    
+    if (spec && schema) {
+        const base = spec.accountScoped ? COMMON_COLS : COMMON_COLS_CHILD;
+        const cols = { ...base };
+        for (const c of spec.cols) {
+            cols[c] = schema[c] || 'TEXT';
+        }
+        const defs = Object.entries(cols).map(([name, type]) => `${name} ${type}`);
+        return `CREATE TABLE IF NOT EXISTS ${spec.remote} (${defs.join(', ')})`;
     }
-    const defs = Object.entries(cols).map(([name, type]) => `${name} ${type}`);
-    return `CREATE TABLE IF NOT EXISTS ${spec.remote} (${defs.join(', ')})`;
+
+    // Tabla dinámica extensible: aprovisionar con envoltorio universal multi-inquilino
+    const remoteTable = `sync_${safeTable}`;
+    const defs = Object.entries(COMMON_COLS).map(([name, type]) => `${name} ${type}`);
+    return `CREATE TABLE IF NOT EXISTS ${remoteTable} (${defs.join(', ')})`;
 }
 
 export const INFRA_DDL = [
@@ -141,19 +151,22 @@ const _tableColumnsCache = new Map();
 const CACHE_TTL_MS = 60 * 1000;
 
 export async function getTableColumns(connection, clientTable) {
-    const spec = TABLE_SPECS[clientTable];
-    if (!spec) return new Set();
+    const safeTable = String(clientTable || '').toLowerCase().trim();
+    if (!/^[a-z][a-z0-9_]{1,40}$/.test(safeTable)) return new Set();
 
-    const cached = _tableColumnsCache.get(spec.remote);
+    const spec = TABLE_SPECS[clientTable];
+    const remote = spec?.remote || `sync_${safeTable}`;
+
+    const cached = _tableColumnsCache.get(remote);
     const now = Date.now();
     if (cached && (now - cached.time < CACHE_TTL_MS)) {
         return cached.cols;
     }
 
     try {
-        const [rows] = await connection.execute(`PRAGMA table_info(${spec.remote})`);
+        const [rows] = await connection.execute(`PRAGMA table_info(${remote})`);
         const cols = new Set((rows || []).map(r => r.name));
-        _tableColumnsCache.set(spec.remote, { cols, time: now });
+        _tableColumnsCache.set(remote, { cols, time: now });
         return cols;
     } catch (e) {
         return new Set();
@@ -167,9 +180,12 @@ export async function getTableColumns(connection, clientTable) {
  * migraciones manuales en producción.
  */
 export async function autoMigrateColumns(connection, clientTable, sampleRow = null) {
+    const safeTable = String(clientTable || '').toLowerCase().trim();
+    if (!/^[a-z][a-z0-9_]{1,40}$/.test(safeTable)) return new Set();
+
     const spec = TABLE_SPECS[clientTable];
+    const remote = spec?.remote || `sync_${safeTable}`;
     const schema = TABLE_SCHEMAS[clientTable];
-    if (!spec) return new Set();
 
     const currentCols = await getTableColumns(connection, clientTable);
     if (!currentCols.size) return currentCols;
@@ -179,11 +195,13 @@ export async function autoMigrateColumns(connection, clientTable, sampleRow = nu
         for (const [col, type] of Object.entries(schema)) {
             if (!currentCols.has(col)) {
                 try {
-                    await connection.execute(`ALTER TABLE ${spec.remote} ADD COLUMN ${col} ${type}`);
+                    await connection.execute(`ALTER TABLE ${remote} ADD COLUMN ${col} ${type}`);
                     currentCols.add(col);
-                    console.log(`✨ [AutoMigrate] Columna agregada a ${spec.remote}: ${col} ${type}`);
+                    console.log(`✨ [AutoMigrate] Columna agregada a ${remote}: ${col} ${type}`);
                 } catch (err) {
-                    console.warn(`⚠️ [AutoMigrate] No se pudo agregar columna ${col} a ${spec.remote}: ${err.message}`);
+                    if (!err.message?.includes('duplicate column name')) {
+                        console.warn(`⚠️ [AutoMigrate] No se pudo agregar columna ${col} a ${remote}: ${err.message}`);
+                    }
                 }
             }
         }
@@ -192,19 +210,23 @@ export async function autoMigrateColumns(connection, clientTable, sampleRow = nu
     // 2. Escalabilidad dinámica: si sampleRow trae campos nuevos válidos
     if (sampleRow && typeof sampleRow === 'object') {
         for (const [key, val] of Object.entries(sampleRow)) {
-            if (!/^[a-zA-Z0-9_]+$/.test(key)) continue;
-            if (currentCols.has(key)) continue;
-            if (['uuid', 'account_email', 'version', 'updated_at', 'deleted_at'].includes(key)) continue;
+            const safeCol = key.toLowerCase().trim();
+            if (!/^[a-z][a-z0-9_]{1,40}$/.test(safeCol)) continue;
+            if (currentCols.has(safeCol)) continue;
+            if (['uuid', 'account_email', 'version', 'updated_at', 'deleted_at'].includes(safeCol)) continue;
 
             const inferredType = typeof val === 'number'
                 ? (Number.isInteger(val) ? 'INTEGER' : 'REAL')
                 : 'TEXT';
             try {
-                await connection.execute(`ALTER TABLE ${spec.remote} ADD COLUMN ${key} ${inferredType}`);
-                currentCols.add(key);
-                console.log(`✨ [AutoMigrate Dynamic] Columna dinámica agregada a ${spec.remote}: ${key} ${inferredType}`);
+                await connection.execute(`ALTER TABLE ${remote} ADD COLUMN ${safeCol} ${inferredType}`);
+                currentCols.add(safeCol);
+                console.log(`✨ [AutoMigrate Dynamic] Columna dinámica agregada a ${remote}: ${safeCol} ${inferredType}`);
             } catch (err) {
-                // Posible carrera con otra lambda concurrente
+                // Si otra lambda concurrente ya la agregó, se ignora pacíficamente
+                if (!err.message?.includes('duplicate column name')) {
+                    console.warn(`⚠️ [AutoMigrate] Fallo menor al agregar ${safeCol} a ${remote}:`, err.message);
+                }
             }
         }
     }
@@ -214,8 +236,7 @@ export async function autoMigrateColumns(connection, clientTable, sampleRow = nu
 
 /**
  * Asegura espejos + infraestructura para las tablas del cliente indicadas.
- * Best-effort por tabla: un fallo se registra y NO tumba el push (la tabla
- * se omite igual que con esquema viejo, ver _push.js).
+ * Best-effort por tabla: un fallo se registra y NO tumba el push.
  * Devuelve la lista de tablas aseguradas.
  */
 export async function ensureMirrorTables(connection, clientTables, changes = null) {
@@ -228,6 +249,19 @@ export async function ensureMirrorTables(connection, clientTables, changes = nul
             ensured.push(table);
             const sample = (changes && Array.isArray(changes[table]) && changes[table][0]) || null;
             await autoMigrateColumns(connection, table, sample);
+
+            // Índice para tabla dinámica si no está en TABLE_SPECS
+            if (!TABLE_SPECS[table]) {
+                const remoteTable = `sync_${table.toLowerCase().trim()}`;
+                try {
+                    await connection.execute(`
+                        CREATE INDEX IF NOT EXISTS idx_${remoteTable}_acc_uuid 
+                        ON ${remoteTable} (account_email, uuid)
+                    `);
+                } catch (idxErr) {
+                    // Ignore index creation race
+                }
+            }
         } catch (e) {
             console.warn(`⚠️ [Ensure] No se pudo asegurar ${table}: ${e.message}`);
         }

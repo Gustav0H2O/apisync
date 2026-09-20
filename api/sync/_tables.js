@@ -109,7 +109,57 @@ export const TABLE_SPECS = {
     },
 };
 
-// Orden de aplicación: padres antes que hijos (FKs de Turso).
+// Grafo de dependencias relacionales para resolver el orden de inserción dinámicamente
+// y prevenir fallos por Foreign Keys (SQLite SQLITE_CONSTRAINT_FOREIGNKEY).
+export const DEPENDENCY_GRAPH = {
+    invoice_items: ['invoices'],
+    stock_movements: ['products'],
+    fiscal_transmissions: ['invoices'],
+};
+
+// Reglas canónicas del núcleo: seguridad, inmutabilidad SENIAT y deduplicación de negocio.
+export const CORE_TABLE_RULES = {
+    products: {
+        businessKey: { cols: ['code'], notEmpty: 'code' },
+    },
+    invoices: {
+        businessKey: { cols: ['document_type', 'number'], notEmpty: 'number' },
+        sealed: true,
+    },
+    audit_logs: {
+        appendOnly: true,
+    },
+};
+
+// Resuelve el orden de tablas entrantes garantizando que los padres vayan antes que los hijos
+export function resolveTableOrder(incomingTables) {
+    const tableSet = new Set(incomingTables);
+    const sorted = [];
+    const visited = new Set();
+    const visiting = new Set();
+
+    function visit(table) {
+        if (visited.has(table)) return;
+        if (visiting.has(table)) return; // Romper ciclos defensivamente
+        visiting.add(table);
+        const deps = DEPENDENCY_GRAPH[table] || [];
+        for (const dep of deps) {
+            if (tableSet.has(dep)) {
+                visit(dep);
+            }
+        }
+        visiting.delete(table);
+        visited.add(table);
+        sorted.push(table);
+    }
+
+    for (const table of incomingTables) {
+        visit(table);
+    }
+    return sorted;
+}
+
+// Orden de aplicación estándar por defecto (padres antes que hijos).
 export const TABLE_ORDER = [
     'clients', 'suppliers', 'categories', 'products', 'invoices',
     'invoice_items', 'stock_movements', 'audit_logs', 'expenses',
