@@ -8,11 +8,13 @@ export const TABLE_SPECS = {
         remote: 'sync_clients',
         accountScoped: true,
         cols: ['name', 'phone', 'rif', 'address', 'discount_rate'],
+        businessKey: { cols: ['rif'], notEmpty: 'rif', ignoreValues: ['v-0', 'j-0', 'v0', 'j0'] },
     },
     suppliers: {
         remote: 'sync_suppliers',
         accountScoped: true,
         cols: ['name', 'rif', 'phone', 'email', 'address', 'contact_person'],
+        businessKey: { cols: ['rif'], notEmpty: 'rif', ignoreValues: ['v-0', 'j-0', 'v0', 'j0'] },
     },
     categories: {
         remote: 'sync_categories',

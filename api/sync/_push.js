@@ -212,7 +212,10 @@ export default async function handler(req, res) {
                 if (spec.businessKey && !row.deleted_at) {
                     const keyVals = spec.businessKey.cols.map(c => row[c]);
                     const notEmptyVal = row[spec.businessKey.notEmpty];
-                    if (notEmptyVal !== null && notEmptyVal !== undefined && String(notEmptyVal) !== '') {
+                    const isIgnored = spec.businessKey.ignoreValues &&
+                        spec.businessKey.ignoreValues.map(v => String(v).trim().toLowerCase()).includes(String(notEmptyVal || '').trim().toLowerCase());
+
+                    if (!isIgnored && notEmptyVal !== null && notEmptyVal !== undefined && String(notEmptyVal).trim() !== '') {
                         const where = spec.businessKey.cols.map(c => `${c} = ?`).join(' AND ');
                         const [found] = await connection.execute(
                             `SELECT * FROM ${spec.remote}
@@ -234,11 +237,34 @@ export default async function handler(req, res) {
                     }
                     const finalVersion = toNumber(canonical.version, 1) + 1;
                     statements.push(upsertStatement(spec, user.email, row, canonicalUuid, finalVersion, now, physicalCols));
-                    // Re-apuntar los items del uuid entrante al canónico
+                    // Re-apuntar dependencias relacionales del uuid entrante al canónico
                     if (table === 'invoices') {
                         statements.push({
                             sql: 'UPDATE sync_invoice_items SET invoice_uuid = ? WHERE invoice_uuid = ?',
                             args: [canonicalUuid, uuid],
+                        });
+                    } else if (table === 'products') {
+                        statements.push({
+                            sql: 'UPDATE sync_invoice_items SET product_uuid = ? WHERE product_uuid = ?',
+                            args: [canonicalUuid, uuid],
+                        });
+                        statements.push({
+                            sql: 'UPDATE sync_stock_movements SET product_uuid = ? WHERE product_uuid = ?',
+                            args: [canonicalUuid, uuid],
+                        });
+                    } else if (table === 'clients') {
+                        statements.push({
+                            sql: 'UPDATE sync_invoices SET client_uuid = ? WHERE client_uuid = ? AND account_email = ?',
+                            args: [canonicalUuid, uuid, user.email],
+                        });
+                    } else if (table === 'suppliers') {
+                        statements.push({
+                            sql: 'UPDATE sync_products SET supplier_uuid = ? WHERE supplier_uuid = ? AND account_email = ?',
+                            args: [canonicalUuid, uuid, user.email],
+                        });
+                        statements.push({
+                            sql: 'UPDATE sync_expenses SET supplier_uuid = ? WHERE supplier_uuid = ? AND account_email = ?',
+                            args: [canonicalUuid, uuid, user.email],
                         });
                     }
                     statements.push(...changeLogStatements(
@@ -339,7 +365,7 @@ function upsertStatement(spec, email, row, uuid, version, now, physicalCols = nu
     vals.push(version, now, row.deleted_at === undefined ? null : row.deleted_at);
 
     const conflictTarget = spec.conflictTarget || '(uuid)';
-    const updatable = cols.filter(c => c !== 'uuid');
+    const updatable = cols.filter(c => c !== 'uuid' && c !== 'account_email');
     let sql = `INSERT INTO ${spec.remote} (${cols.join(', ')})
                VALUES (${cols.map(() => '?').join(', ')})
                ON CONFLICT ${conflictTarget} DO UPDATE SET
