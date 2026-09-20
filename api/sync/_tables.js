@@ -75,6 +75,7 @@ export const TABLE_SPECS = {
         remote: 'sync_taxes',
         accountScoped: true,
         cols: ['name', 'rate', 'type', 'is_default'],
+        conflictTarget: '(account_email, uuid)',
     },
     audit_logs: {
         remote: 'sync_audit_logs',

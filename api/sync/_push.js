@@ -100,16 +100,16 @@ export default async function handler(req, res) {
             try {
                 if (spec.accountScoped) {
                     [existingRows] = await connection.execute(
-                        `SELECT * FROM ${spec.remote} WHERE uuid IN (${placeholders})`,
-                        uuids
+                        `SELECT * FROM ${spec.remote} WHERE account_email = ? AND uuid IN (${placeholders})`,
+                        [user.email, ...uuids]
                     );
                 } else {
                     [existingRows] = await connection.execute(
                         `SELECT i.*, p.account_email AS parent_account, p.sealed_at AS parent_sealed
                          FROM ${spec.remote} i
                          LEFT JOIN ${spec.parent.table} p ON p.uuid = i.${spec.parent.fk}
-                         WHERE i.uuid IN (${placeholders})`,
-                        uuids
+                         WHERE p.account_email = ? AND i.uuid IN (${placeholders})`,
+                        [user.email, ...uuids]
                     );
                 }
             } catch (e) {
@@ -338,10 +338,11 @@ function upsertStatement(spec, email, row, uuid, version, now, physicalCols = nu
     cols.push('version', 'updated_at', 'deleted_at');
     vals.push(version, now, row.deleted_at === undefined ? null : row.deleted_at);
 
-    const updatable = cols.filter(c => c !== 'uuid' && c !== 'account_email');
+    const conflictTarget = spec.conflictTarget || '(uuid)';
+    const updatable = cols.filter(c => c !== 'uuid');
     let sql = `INSERT INTO ${spec.remote} (${cols.join(', ')})
                VALUES (${cols.map(() => '?').join(', ')})
-               ON CONFLICT(uuid) DO UPDATE SET
+               ON CONFLICT ${conflictTarget} DO UPDATE SET
                ${updatable.map(c => `${c} = excluded.${c}`).join(', ')}`;
 
     // Cinturón de seguridad en SQL además de la decisión en JS: una factura
