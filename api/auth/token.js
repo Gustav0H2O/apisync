@@ -81,7 +81,7 @@ async function handleConfirm(req, res) {
         }
         
         await queryDB(`INSERT INTO devices (device_id, license_key, name, last_seen, paired_at, revoked) VALUES (?, ?, ?, datetime('now'), datetime('now'), 0) ON CONFLICT(device_id) DO UPDATE SET revoked = 0, license_key = excluded.license_key, name = excluded.name, last_seen = datetime('now')`, [device_id, licenseKey, device_name || 'Nuevo Dispositivo']);
-        await queryDB(`UPDATE pairing_sessions SET confirmed = 1 WHERE session_id = ?`, [session_id]);
+        await queryDB(`UPDATE pairing_sessions SET confirmed = 1, confirmed_device_id = ? WHERE session_id = ?`, [device_id, session_id]);
         
         const licRows = await queryDB(
             `SELECT c.email, l.tipo AS license_type, ds.fecha_vencimiento AS saas_expiration 
@@ -108,9 +108,12 @@ async function handleStatus(req, res) {
     const { session_id } = req.query;
     if (!session_id) return res.status(400).json({ error: 'Falta session_id' });
     try {
-        const [session] = await queryDB(`SELECT confirmed FROM pairing_sessions WHERE session_id = ? AND device_id_source = ? LIMIT 1`, [session_id, user.deviceId]);
+        const [session] = await queryDB(`SELECT confirmed, confirmed_device_id FROM pairing_sessions WHERE session_id = ? AND device_id_source = ? LIMIT 1`, [session_id, user.deviceId]);
         if (!session) return res.status(404).json({ error: 'Sesión no encontrada' });
-        return res.status(200).json({ confirmed: session.confirmed === 1 });
+        return res.status(200).json({ 
+            confirmed: session.confirmed === 1,
+            target_device_id: session.confirmed_device_id || null
+        });
     } catch (e) { return res.status(500).json({ error: e.message }); }
 }
 
