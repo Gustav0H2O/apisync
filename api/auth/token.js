@@ -80,7 +80,7 @@ async function handleConfirm(req, res) {
             });
         }
         
-        await queryDB(`INSERT INTO devices (device_id, license_key, name, last_seen, paired_at, revoked) VALUES (?, ?, ?, datetime('now'), datetime('now'), 0) ON CONFLICT(device_id) DO UPDATE SET revoked = 0, license_key = excluded.license_key, name = excluded.name, last_seen = datetime('now')`, [device_id, licenseKey, device_name || 'Nuevo Dispositivo']);
+        await queryDB(`INSERT INTO devices (device_id, license_key, name, last_seen, paired_at, revoked) VALUES (?, ?, ?, datetime('now'), datetime('now'), 0) ON CONFLICT(device_id) DO UPDATE SET revoked = 0, paired_at = datetime('now'), license_key = excluded.license_key, name = excluded.name, last_seen = datetime('now')`, [device_id, licenseKey, device_name || 'Nuevo Dispositivo']);
         await queryDB(`UPDATE pairing_sessions SET confirmed = 1, confirmed_device_id = ? WHERE session_id = ?`, [device_id, session_id]);
         
         const licRows = await queryDB(
@@ -125,7 +125,7 @@ async function handleLink(req, res) {
     const policy = await getLicensePolicy(user.licenseKey);
     const [active] = await queryDB(`SELECT COUNT(*) AS c FROM devices WHERE license_key = ? AND revoked = 0 AND device_id != ?`, [user.licenseKey, target_device_id]);
     if (Number(active.c || 0) >= policy.maxDevicesAllowed) return res.status(403).json({ error: 'Límite de dispositivos alcanzado' });
-    await queryDB(`INSERT INTO devices (device_id, license_key, name, last_seen, paired_at, revoked) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0) ON CONFLICT(device_id) DO UPDATE SET license_key = excluded.license_key, revoked = 0, last_seen = CURRENT_TIMESTAMP`, [target_device_id, user.licenseKey, name || 'Dispositivo vinculado']);
+    await queryDB(`INSERT INTO devices (device_id, license_key, name, last_seen, paired_at, revoked) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0) ON CONFLICT(device_id) DO UPDATE SET license_key = excluded.license_key, revoked = 0, paired_at = CURRENT_TIMESTAMP, last_seen = CURRENT_TIMESTAMP`, [target_device_id, user.licenseKey, name || 'Dispositivo vinculado']);
     return res.status(200).json({ success: true });
 }
 
