@@ -168,19 +168,38 @@ async function handleUnlink(req, res) {
     const user = await verifyToken(req);
     if (!user) return res.status(401).json({ error: 'No autorizado' });
     const { license_key, email, target_device_id } = req.body || {};
-    if (!license_key || !email) return res.status(400).json({ error: 'Faltan parámetros de validación' });
-    if (license_key !== user.licenseKey) return res.status(403).json({ error: 'Licencia inválida para esta sesión' });
+
+    // Fallback: si el cliente no envió license_key/email en el body (o llegaron
+    // vacíos — p.ej. prefs con la cuenta a medio persistir), se usan los claims
+    // del JWT, que ya son fuente de verdad tras verificar el token. El email
+    // además se puede recuperar del dueño registrado de la licencia en la BD.
+    let effectiveLicense = (license_key || '').trim().toUpperCase() || String(user.licenseKey || '').trim().toUpperCase();
+    let effectiveEmail = (email || '').trim().toLowerCase() || String(user.email || '').trim().toLowerCase();
+
+    if (!effectiveLicense) return res.status(400).json({ error: 'Faltan parámetros de validación (license_key)' });
+
+    if (effectiveLicense !== String(user.licenseKey || '').trim().toUpperCase()) {
+        return res.status(403).json({ error: 'Licencia inválida para esta sesión' });
+    }
+
     try {
-        const ownerRows = await queryDB(`SELECT c.email FROM licencias l JOIN clientes c ON c.id = l.cliente_id WHERE l.license_key = ? LIMIT 1`, [license_key]);
+        const ownerRows = await queryDB(`SELECT c.email FROM licencias l JOIN clientes c ON c.id = l.cliente_id WHERE UPPER(TRIM(l.license_key)) = ? LIMIT 1`, [effectiveLicense]);
         if (!ownerRows.length) return res.status(404).json({ error: 'Licencia no encontrada' });
-        if (String(ownerRows[0].email || '').trim().toLowerCase() !== String(email).trim().toLowerCase()) return res.status(403).json({ error: 'Correo no coincide con la licencia' });
+
+        const ownerEmail = String(ownerRows[0].email || '').trim().toLowerCase();
+        if (!effectiveEmail) effectiveEmail = ownerEmail; // último respaldo: dueño en BD
+        if (!effectiveEmail) return res.status(400).json({ error: 'Faltan parámetros de validación (email)' });
+
+        if (ownerEmail && !ownerEmail.startsWith('placeholder-') && ownerEmail !== effectiveEmail) {
+            return res.status(403).json({ error: 'Correo no coincide con la licencia' });
+        }
 
         let rowToUnlink = null;
         if (target_device_id) {
-            const targetRows = await queryDB(`SELECT device_id FROM devices WHERE license_key = ? AND device_id = ? AND revoked = 0 LIMIT 1`, [license_key, target_device_id]);
+            const targetRows = await queryDB(`SELECT device_id FROM devices WHERE license_key = ? AND device_id = ? AND revoked = 0 LIMIT 1`, [effectiveLicense, target_device_id]);
             if (targetRows.length) rowToUnlink = targetRows[0];
         } else {
-            const otherRows = await queryDB(`SELECT device_id FROM devices WHERE license_key = ? AND revoked = 0 AND device_id <> ? ORDER BY last_seen DESC LIMIT 1`, [license_key, user.deviceId]);
+            const otherRows = await queryDB(`SELECT device_id FROM devices WHERE license_key = ? AND revoked = 0 AND device_id <> ? ORDER BY last_seen DESC LIMIT 1`, [effectiveLicense, user.deviceId]);
             if (otherRows.length) rowToUnlink = otherRows[0];
         }
 
@@ -189,9 +208,9 @@ async function handleUnlink(req, res) {
 
         // Se eliminó 'revoked_at' ya que no existe en el esquema proporcionado. 
         // Se usa 'last_seen' para registrar el momento de la desvinculación.
-        await queryDB(`UPDATE devices SET revoked = 1, last_seen = CURRENT_TIMESTAMP WHERE license_key = ? AND device_id = ?`, [license_key, rowToUnlink.device_id]);
+        await queryDB(`UPDATE devices SET revoked = 1, last_seen = CURRENT_TIMESTAMP WHERE license_key = ? AND device_id = ?`, [effectiveLicense, rowToUnlink.device_id]);
         
-        const policy = await getLicensePolicy(license_key);
+        const policy = await getLicensePolicy(effectiveLicense);
         const [cooldown] = await queryDB(`SELECT datetime('now', '+' || ? || ' hours') AS cooldown_until`, [policy.pairCooldownDays * 24]);
 
         return res.status(200).json({ 
@@ -240,7 +259,8 @@ async function handleRename(req, res) {
 async function handleToken(req, res) {
     const { license_key, device_id, name } = req.body || {};
     if (!license_key || !device_id) return res.status(400).json({ error: 'Faltan parámetros' });
-    const rows = await queryDB(`SELECT l.id, l.tipo, c.email, ds.fecha_vencimiento FROM licencias l JOIN clientes c ON l.cliente_id = c.id LEFT JOIN detalles_saas ds ON ds.licencia_id = l.id WHERE l.license_key = ? AND l.usado = 1`, [license_key]);
+    const cleanKey = String(license_key).trim().toUpperCase();
+    const rows = await queryDB(`SELECT l.id, l.tipo, c.email, ds.fecha_vencimiento FROM licencias l JOIN clientes c ON l.cliente_id = c.id LEFT JOIN detalles_saas ds ON ds.licencia_id = l.id WHERE UPPER(TRIM(l.license_key)) = ? AND l.usado = 1`, [cleanKey]);
     if (!rows.length) return res.status(401).json({ error: 'Licencia inválida o no activa' });
     const lic = rows[0];
     if (lic.tipo === 'SAAS' && lic.fecha_vencimiento && new Date(lic.fecha_vencimiento) < new Date()) return res.status(401).json({ error: 'Licencia vencida' });
