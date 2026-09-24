@@ -199,14 +199,24 @@ async function handleUnlink(req, res) {
 
         let rowToUnlink = null;
         if (target_device_id) {
-            const targetRows = await queryDB(`SELECT device_id FROM devices WHERE license_key = ? AND device_id = ? AND revoked = 0 LIMIT 1`, [effectiveLicense, target_device_id]);
-            if (targetRows.length) rowToUnlink = targetRows[0];
+            const targetRows = await queryDB(`SELECT device_id, revoked FROM devices WHERE license_key = ? AND device_id = ? LIMIT 1`, [effectiveLicense, target_device_id]);
+            if (targetRows.length) {
+                rowToUnlink = targetRows[0];
+            } else {
+                return res.status(200).json({ 
+                    ok: true, 
+                    unlinked_device_id: target_device_id,
+                    note: 'Dispositivo no registrado en nube'
+                });
+            }
         } else {
-            const otherRows = await queryDB(`SELECT device_id FROM devices WHERE license_key = ? AND revoked = 0 AND device_id <> ? ORDER BY last_seen DESC LIMIT 1`, [effectiveLicense, user.deviceId]);
+            const otherRows = await queryDB(`SELECT device_id, revoked FROM devices WHERE license_key = ? AND revoked = 0 AND device_id <> ? ORDER BY last_seen DESC LIMIT 1`, [effectiveLicense, user.deviceId]);
             if (otherRows.length) rowToUnlink = otherRows[0];
         }
 
-        if (!rowToUnlink) return res.status(404).json({ error: 'No se encontró otro dispositivo activo para desvincular' });
+        if (!rowToUnlink) {
+            return res.status(200).json({ ok: true, unlinked_device_id: target_device_id || null });
+        }
         if (rowToUnlink.device_id === user.deviceId) return res.status(400).json({ error: 'No puedes desvincular el dispositivo actual' });
 
         // Se eliminó 'revoked_at' ya que no existe en el esquema proporcionado. 
