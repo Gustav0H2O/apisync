@@ -133,7 +133,7 @@ async function handleDeviceStatus(req, res) {
     const { device_id } = req.query;
     if (!device_id) return res.status(400).json({ error: 'Falta device_id' });
     const rows = await queryDB(
-        `SELECT d.license_key, c.email, l.tipo AS license_type, ds.fecha_vencimiento AS saas_expiration 
+        `SELECT d.license_key, c.email, l.tipo AS license_type, ds.fecha_vencimiento AS saas_expiration, d.paired_at, d.revoked 
          FROM devices d 
          JOIN licencias l ON d.license_key = l.license_key 
          JOIN clientes c ON l.cliente_id = c.id 
@@ -142,12 +142,20 @@ async function handleDeviceStatus(req, res) {
         [device_id]
     );
     if (!rows.length) return res.status(200).json({ authorized: false });
+    
+    let pairedAtIso = null;
+    if (rows[0].paired_at) {
+        const raw = String(rows[0].paired_at).trim();
+        pairedAtIso = raw.includes('T') ? raw : raw.replace(' ', 'T') + 'Z';
+    }
+
     return res.status(200).json({ 
         authorized: true, 
         license_key: rows[0].license_key, 
         email: rows[0].email, 
         license_type: rows[0].license_type,
-        saas_expiration: rows[0].saas_expiration
+        saas_expiration: rows[0].saas_expiration,
+        paired_at: pairedAtIso
     });
 }
 
@@ -168,9 +176,29 @@ async function handleDevicesList(req, res) {
 }
 
 async function handleUnlink(req, res) {
-    const user = await verifyToken(req);
-    if (!user) return res.status(401).json({ error: 'No autorizado' });
-    const { license_key, email, target_device_id } = req.body || {};
+    let user = await verifyToken(req);
+    const { license_key, email, target_device_id, allow_self } = req.body || {};
+
+    // Si no hay token de usuario (o el token ya expiró/desconectado), permitir desvinculación si
+    // se envían explícitamente target_device_id y license_key válidos en la BD:
+    if (!user) {
+        const devId = target_device_id;
+        const lic = (license_key || '').trim().toUpperCase();
+        if (devId && lic) {
+            const devRows = await queryDB(
+                `SELECT device_id FROM devices WHERE device_id = ? AND UPPER(TRIM(license_key)) = ? AND revoked = 0 LIMIT 1`,
+                [devId, lic]
+            );
+            if (devRows.length) {
+                await queryDB(
+                    `UPDATE devices SET revoked = 1, last_seen = CURRENT_TIMESTAMP WHERE UPPER(TRIM(license_key)) = ? AND device_id = ?`,
+                    [lic, devId]
+                );
+                return res.status(200).json({ ok: true, unlinked_device_id: devId });
+            }
+        }
+        return res.status(401).json({ error: 'No autorizado' });
+    }
 
     // Fallback: si el cliente no envió license_key/email en el body (o llegaron
     // vacíos — p.ej. prefs con la cuenta a medio persistir), se usan los claims
@@ -217,7 +245,9 @@ async function handleUnlink(req, res) {
         if (!rowToUnlink) {
             return res.status(200).json({ ok: true, unlinked_device_id: target_device_id || null });
         }
-        if (rowToUnlink.device_id === user.deviceId) return res.status(400).json({ error: 'No puedes desvincular el dispositivo actual' });
+        if (rowToUnlink.device_id === user.deviceId && !allow_self && target_device_id !== user.deviceId) {
+            return res.status(400).json({ error: 'No puedes desvincular el dispositivo actual' });
+        }
 
         // Se eliminó 'revoked_at' ya que no existe en el esquema proporcionado. 
         // Se usa 'last_seen' para registrar el momento de la desvinculación.

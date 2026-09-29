@@ -114,7 +114,7 @@ export default async function handler(req, res) {
              VALUES (?, ?, ?, datetime('now'), datetime('now'), 0)
              ON CONFLICT(device_id) DO UPDATE SET
                license_key = excluded.license_key, name = excluded.name,
-               revoked = 0, last_seen = datetime('now')`,
+               revoked = 0, last_seen = datetime('now'), paired_at = datetime('now')`,
             [device_id, license_key, device_name || 'Nuevo Dispositivo']
         );
 
