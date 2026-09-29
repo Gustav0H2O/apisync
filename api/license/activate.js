@@ -1,6 +1,6 @@
 import jwt from 'jsonwebtoken';
 import { getConnection } from '../_db.js';
-import { requireJwtSecret, applyCors } from '../_helpers.js';
+import { requireJwtSecret, applyCors, parseExpirationDate } from '../_helpers.js';
 import { signLicensePayload } from './_sign.js';
 
 const DEFAULT_MAX_DEVICES = 2;
@@ -118,8 +118,9 @@ export default async function handler(req, res) {
             [device_id, license_key, device_name || 'Nuevo Dispositivo']
         );
 
-        const saasExpiration = tipo === 'saas' && lic.fecha_vencimiento
-            ? new Date(lic.fecha_vencimiento).toISOString()
+        const expDate = parseExpirationDate(lic.fecha_vencimiento);
+        const saasExpiration = tipo === 'saas' && expDate
+            ? expDate.toISOString()
             : null;
 
         const token = jwt.sign(

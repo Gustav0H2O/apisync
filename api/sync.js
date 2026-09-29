@@ -1,5 +1,5 @@
 import { getConnection } from './_db.js';
-import { verifyToken, isDeviceRevoked, applyCors } from './_helpers.js';
+import { verifyToken, isDeviceRevoked, applyCors, parseExpirationDate } from './_helpers.js';
 import { changeLogStatements, ensureCursorStatement, TABLE_SPECS } from './sync/_tables.js';
 import { sendToLicense } from './_fcm.js';
 
@@ -46,6 +46,10 @@ export default async function handler(req, res) {
 
     if (await isDeviceRevoked(user)) {
         return res.status(401).json({ error: 'DEVICE_REVOKED', message: 'Este dispositivo ha sido desvinculado' });
+    }
+
+    if (user.isExpired) {
+        return res.status(402).json({ error: 'subscription_expired', message: 'Suscripción SaaS vencida. Renueva para sincronizar.' });
     }
 
 

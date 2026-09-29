@@ -1,7 +1,7 @@
 import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
 import { queryDB } from '../_db.js';
-import { verifyToken, isDeviceRevoked, applyCors } from '../_helpers.js';
+import { verifyToken, isDeviceRevoked, applyCors, parseExpirationDate } from '../_helpers.js';
 
 const JWT_SECRET = process.env.JWT_SECRET;
 const TOKEN_EXPIRY = '1h';
@@ -92,11 +92,12 @@ async function handleConfirm(req, res) {
             [licenseKey]
         );
         const licData = licRows[0] || {};
+        const saasExp = parseExpirationDate(licData.saas_expiration);
         return res.status(200).json({ 
             license_key: licenseKey, 
             email: licData.email,
             license_type: licData.license_type,
-            saas_expiration: licData.saas_expiration,
+            saas_expiration: saasExp ? saasExp.toISOString() : null,
             confirm: true 
         });
     } catch (e) { return res.status(500).json({ error: e.message }); }
@@ -149,12 +150,13 @@ async function handleDeviceStatus(req, res) {
         pairedAtIso = raw.includes('T') ? raw : raw.replace(' ', 'T') + 'Z';
     }
 
+    const saasExp = parseExpirationDate(rows[0].saas_expiration);
     return res.status(200).json({ 
         authorized: true, 
         license_key: rows[0].license_key, 
         email: rows[0].email, 
         license_type: rows[0].license_type,
-        saas_expiration: rows[0].saas_expiration,
+        saas_expiration: saasExp ? saasExp.toISOString() : null,
         paired_at: pairedAtIso
     });
 }
@@ -306,7 +308,9 @@ async function handleToken(req, res) {
     const rows = await queryDB(`SELECT l.id, l.tipo, c.email, ds.fecha_vencimiento FROM licencias l JOIN clientes c ON l.cliente_id = c.id LEFT JOIN detalles_saas ds ON ds.licencia_id = l.id WHERE UPPER(TRIM(l.license_key)) = ? AND l.usado = 1`, [cleanKey]);
     if (!rows.length) return res.status(401).json({ error: 'Licencia inválida o no activa' });
     const lic = rows[0];
-    if (lic.tipo === 'SAAS' && lic.fecha_vencimiento && new Date(lic.fecha_vencimiento) < new Date()) return res.status(401).json({ error: 'Licencia vencida' });
+    const tipo = String(lic.tipo || 'unique').trim().toLowerCase();
+    const expDate = parseExpirationDate(lic.fecha_vencimiento);
+    const isExpired = tipo === 'saas' && expDate && expDate < new Date();
     
     const known = await queryDB(`SELECT revoked FROM devices WHERE device_id = ? AND license_key = ? LIMIT 1`, [device_id, license_key]);
     // Number(): libsql (intMode 'string') devuelve revoked como "1" — con la
@@ -337,8 +341,8 @@ async function handleToken(req, res) {
     } else {
         await queryDB(`UPDATE devices SET last_seen = CURRENT_TIMESTAMP WHERE device_id = ?`, [device_id]);
     }
-    const token = jwt.sign({ licenseKey: license_key, deviceId: device_id, email: lic.email }, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
-    return res.status(200).json({ token, expiresIn: 3600 });
+    const token = jwt.sign({ licenseKey: license_key, deviceId: device_id, email: lic.email, isExpired }, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
+    return res.status(200).json({ token, expiresIn: 3600, is_expired: isExpired });
 }
 
 // --- MAIN HANDLER (ROUTER) ---

@@ -1,5 +1,5 @@
 import { getConnection } from '../_db.js';
-import { verifyToken, isDeviceRevoked, requireJwtSecret, applyCors } from '../_helpers.js';
+import { verifyToken, isDeviceRevoked, requireJwtSecret, applyCors, parseExpirationDate } from '../_helpers.js';
 import { signLicensePayload } from './_sign.js';
 
 /**
@@ -51,11 +51,12 @@ export default async function handler(req, res) {
             status = 'revoked';
         }
 
-        const saasExpiration = tipo === 'saas' && lic.fecha_vencimiento
-            ? new Date(lic.fecha_vencimiento).toISOString()
+        const expDate = parseExpirationDate(lic.fecha_vencimiento);
+        const saasExpiration = tipo === 'saas' && expDate
+            ? expDate.toISOString()
             : null;
-        if (status === 'active' && tipo === 'saas' && saasExpiration &&
-            new Date(saasExpiration) < new Date()) {
+        if (status === 'active' && tipo === 'saas' && expDate &&
+            expDate < new Date()) {
             status = 'expired';
         }
 

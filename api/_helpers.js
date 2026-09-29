@@ -3,6 +3,32 @@ import { getConnection } from './_db.js';
 
 export { applyCors } from './_cors.js';
 
+/**
+ * Parsea una fecha de vencimiento de BD respetando la zona horaria del negocio
+ * (Venezuela / UTC-4 por defecto cuando no se indica offset).
+ *
+ * 1. "YYYY-MM-DD" → 23:59:59.999 en UTC-4 (válida todo el día calendario).
+ * 2. "YYYY-MM-DD HH:MM:SS" → interpretada en UTC-4 (no en UTC crudo de Vercel).
+ * 3. ISO con 'Z' o desplazamiento → se respeta su timezone original.
+ */
+export function parseExpirationDate(val) {
+    if (!val) return null;
+    const str = String(val).trim();
+    if (!str) return null;
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+        return new Date(`${str}T23:59:59.999-04:00`);
+    }
+
+    if (/^\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}(:\d{2})?(\.\d+)?$/.test(str)) {
+        const iso = str.replace(/\s+/, 'T');
+        return new Date(`${iso}-04:00`);
+    }
+
+    const d = new Date(str);
+    return isNaN(d.getTime()) ? null : d;
+}
+
 const JWT_SECRET = process.env.JWT_SECRET;
 
 /**
