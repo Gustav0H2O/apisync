@@ -67,16 +67,21 @@ export default async function handler(req, res) {
         const usado = Number(lic.usado) === 1;
         const maxDevices = Number(lic.max_devices) || DEFAULT_MAX_DEVICES;
 
-        if (!isPlaceholder && clientEmail !== normalizedEmail) {
-            return res.status(409).json({ error: 'already_used' });
+        if (clientEmail && !isPlaceholder && clientEmail !== normalizedEmail) {
+            return res.status(409).json({
+                error: 'already_used',
+                message: 'Esta licencia ya fue activada con otro correo electrónico.'
+            });
         }
 
         const expDate = parseExpirationDate(lic.fecha_vencimiento);
-        if (tipo === 'saas' && expDate && expDate < new Date()) {
-            return res.status(403).json({
-                error: 'expired',
-                message: 'Esta licencia ya está vencida. Adquiere una nueva licencia o renueva tu suscripción.'
-            });
+        if (tipo === 'saas') {
+            if (!expDate || expDate < new Date()) {
+                return res.status(403).json({
+                    error: 'expired',
+                    message: 'Esta licencia está vencida. Adquiere una nueva clave o renueva tu suscripción.'
+                });
+            }
         }
 
         let accountEmail = isPlaceholder ? normalizedEmail : clientEmail;
