@@ -1,3 +1,4 @@
+import jwt from 'jsonwebtoken';
 import { getConnection } from '../_db.js';
 import { verifyToken, isDeviceRevoked, requireJwtSecret, applyCors, parseExpirationDate } from '../_helpers.js';
 import { signLicensePayload } from './_sign.js';
@@ -51,7 +52,7 @@ export default async function handler(req, res) {
                      JOIN clientes c ON l.cliente_id = c.id
                      LEFT JOIN detalles_saas ds ON ds.licencia_id = l.id
                      WHERE LOWER(TRIM(c.email)) = ? AND l.usado = 1
-                     ORDER BY ds.fecha_vencimiento DESC, l.id DESC LIMIT 1`,
+                     ORDER BY CASE WHEN LOWER(TRIM(l.tipo)) = 'unique' THEN '9999-12-31' ELSE COALESCE(ds.fecha_vencimiento, '1970-01-01') END DESC, l.id DESC LIMIT 1`,
                     [tokenEmail]
                 );
                 if (activeRows.length) {
@@ -112,6 +113,15 @@ export default async function handler(req, res) {
             );
         }
 
+        let newToken = null;
+        if (effectiveLicenseKey !== user.licenseKey) {
+            newToken = jwt.sign(
+                { licenseKey: effectiveLicenseKey, deviceId: user.deviceId, email: tokenEmail || clientEmail },
+                process.env.JWT_SECRET,
+                { expiresIn: '1h' }
+            );
+        }
+
         const { signed_payload, signature } = signLicensePayload({
             licenseKey: effectiveLicenseKey,
             deviceId: user.deviceId,
@@ -124,6 +134,7 @@ export default async function handler(req, res) {
             license_key: effectiveLicenseKey,
             license_type: tipo,
             saas_expiration: saasExpiration,
+            token: newToken,
             signed_payload,
             signature,
             signed_at: new Date().toISOString(),

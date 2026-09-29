@@ -311,24 +311,52 @@ async function handleToken(req, res) {
     const tipo = String(lic.tipo || 'unique').trim().toLowerCase();
     const expDate = parseExpirationDate(lic.fecha_vencimiento);
     const isExpired = tipo === 'saas' && expDate && expDate < new Date();
+
+    let effectiveKey = cleanKey;
+    let effectiveTipo = tipo;
+    let effectiveExpDate = expDate;
+    let effectiveIsExpired = isExpired;
+
+    if (isExpired && lic.email && !lic.email.startsWith('placeholder-')) {
+        const altRows = await queryDB(
+            `SELECT l.id, l.license_key, l.tipo, ds.fecha_vencimiento
+             FROM licencias l
+             JOIN clientes c ON l.cliente_id = c.id
+             LEFT JOIN detalles_saas ds ON ds.licencia_id = l.id
+             WHERE LOWER(TRIM(c.email)) = ? AND l.usado = 1
+             ORDER BY CASE WHEN LOWER(TRIM(l.tipo)) = 'unique' THEN '9999-12-31' ELSE COALESCE(ds.fecha_vencimiento, '1970-01-01') END DESC, l.id DESC LIMIT 1`,
+            [lic.email.trim().toLowerCase()]
+        );
+        if (altRows.length) {
+            const altExp = parseExpirationDate(altRows[0].fecha_vencimiento);
+            const altTipo = String(altRows[0].tipo || 'unique').trim().toLowerCase();
+            const altValid = altTipo === 'unique' || (altExp && altExp >= new Date());
+            if (altValid) {
+                effectiveKey = altRows[0].license_key;
+                effectiveTipo = altTipo;
+                effectiveExpDate = altExp;
+                effectiveIsExpired = false;
+            }
+        }
+    }
     
-    const known = await queryDB(`SELECT revoked FROM devices WHERE device_id = ? AND license_key = ? LIMIT 1`, [device_id, license_key]);
+    const known = await queryDB(`SELECT revoked FROM devices WHERE device_id = ? AND (license_key = ? OR license_key = ?) LIMIT 1`, [device_id, cleanKey, effectiveKey]);
     // Number(): libsql (intMode 'string') devuelve revoked como "1" — con la
     // comparación estricta un dispositivo desvinculado seguía obteniendo token.
     if (known.length && Number(known[0].revoked) === 1) return res.status(401).json({ error: 'DEVICE_REVOKED' });
 
-    const policy = await getLicensePolicy(license_key);
+    const policy = await getLicensePolicy(effectiveKey);
 
     if (!known.length) {
         const cooldownHours = policy.pairCooldownDays * 24;
-        const [active] = await queryDB(`SELECT COUNT(*) AS c FROM devices WHERE license_key = ? AND revoked = 0`, [license_key]);
+        const [active] = await queryDB(`SELECT COUNT(*) AS c FROM devices WHERE license_key = ? AND revoked = 0`, [effectiveKey]);
         const activeCount = Number(active.c || 0);
 
         if (activeCount >= policy.maxDevicesAllowed) {
             return res.status(403).json({ error: 'Límite de dispositivos alcanzado' });
         }
 
-        const recentRevoked = await queryDB(`SELECT datetime(last_seen, '+' || ? || ' hours') AS cooldown_until FROM devices WHERE license_key = ? AND revoked = 1 AND (julianday('now') - julianday(last_seen)) * 24 < ? ORDER BY last_seen DESC LIMIT 1`, [cooldownHours, license_key, cooldownHours]);
+        const recentRevoked = await queryDB(`SELECT datetime(last_seen, '+' || ? || ' hours') AS cooldown_until FROM devices WHERE license_key = ? AND revoked = 1 AND (julianday('now') - julianday(last_seen)) * 24 < ? ORDER BY last_seen DESC LIMIT 1`, [cooldownHours, effectiveKey, cooldownHours]);
         if (recentRevoked.length) {
             return res.status(429).json({ 
                 error: `Debes esperar ${policy.pairCooldownDays} días para vincular un nuevo dispositivo`, 
@@ -337,12 +365,12 @@ async function handleToken(req, res) {
             });
         }
 
-        await queryDB(`INSERT INTO devices (device_id, license_key, name, last_seen, paired_at, revoked) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0) ON CONFLICT(device_id) DO UPDATE SET license_key = excluded.license_key, name = excluded.name, revoked = 0, last_seen = CURRENT_TIMESTAMP`, [device_id, license_key, name || 'Sin nombre']);
+        await queryDB(`INSERT INTO devices (device_id, license_key, name, last_seen, paired_at, revoked) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0) ON CONFLICT(device_id) DO UPDATE SET license_key = excluded.license_key, name = excluded.name, revoked = 0, last_seen = CURRENT_TIMESTAMP`, [device_id, effectiveKey, name || 'Sin nombre']);
     } else {
-        await queryDB(`UPDATE devices SET last_seen = CURRENT_TIMESTAMP WHERE device_id = ?`, [device_id]);
+        await queryDB(`UPDATE devices SET license_key = ?, last_seen = CURRENT_TIMESTAMP WHERE device_id = ?`, [effectiveKey, device_id]);
     }
-    const token = jwt.sign({ licenseKey: license_key, deviceId: device_id, email: lic.email, isExpired }, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
-    return res.status(200).json({ token, expiresIn: 3600, is_expired: isExpired });
+    const token = jwt.sign({ licenseKey: effectiveKey, deviceId: device_id, email: lic.email, isExpired: effectiveIsExpired }, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
+    return res.status(200).json({ token, expiresIn: 3600, is_expired: effectiveIsExpired, license_key: effectiveKey });
 }
 
 // --- MAIN HANDLER (ROUTER) ---
