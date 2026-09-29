@@ -380,16 +380,37 @@ async function handleToken(req, res) {
         }
     }
     
-    const known = await queryDB(
-        `SELECT revoked FROM devices WHERE device_id = ? AND (
-            license_key = ? OR license_key = ? OR license_key IN (
-                SELECT l2.license_key FROM licencias l2
-                JOIN clientes c2 ON l2.cliente_id = c2.id
-                WHERE LOWER(TRIM(c2.email)) = ?
-            )
-        ) LIMIT 1`,
-        [device_id, cleanKey, effectiveKey, searchEmail || 'none']
-    );
+    // v49r2: la revocación solo vale contra la licencia EFECTIVA. La fila de
+    // la licencia efectiva manda; las filas de OTRAS licencias de la MISMA
+    // cuenta (mismo email: rotaciones/renovaciones) jamás bloquean — antes un
+    // LIMIT 1 sin orden podía devolver una fila revocada vieja y el equipo
+    // quedaba como DEVICE_REVOKED justo al renovar. Si TODA la cuenta solo
+    // tiene filas revocadas, el veto del admin se respeta (401).
+    const scopeEmail = (searchEmail && !searchEmail.startsWith('placeholder-'))
+        ? searchEmail
+        : ((lic.email && !String(lic.email).startsWith('placeholder-')) ? String(lic.email).trim().toLowerCase() : '');
+    let known = [];
+    {
+        const effRows = await queryDB(
+            `SELECT revoked FROM devices WHERE device_id = ? AND license_key = ? LIMIT 1`,
+            [device_id, effectiveKey]);
+        if (effRows.length) known = effRows;
+    }
+    if (!known.length && scopeEmail) {
+        const scopeRows = await queryDB(
+            `SELECT revoked FROM devices WHERE device_id = ? AND license_key IN (
+                 SELECT l2.license_key FROM licencias l2
+                 JOIN clientes c2 ON l2.cliente_id = c2.id
+                 WHERE LOWER(TRIM(c2.email)) = ?
+             ) ORDER BY revoked ASC, last_seen DESC LIMIT 1`,
+            [device_id, scopeEmail]);
+        if (scopeRows.length && Number(scopeRows[0].revoked) === 0) {
+            known = scopeRows; // adopción: hay registro ACTIVO en la misma cuenta
+        } else if (scopeRows.length) {
+            return res.status(401).json({ error: 'DEVICE_REVOKED' }); // todo revocado en la cuenta
+        }
+        // Sin filas en la cuenta: dispositivo realmente nuevo → sigue al registro.
+    }
     // Number(): libsql (intMode 'string') devuelve revoked como "1" — con la
     // comparación estricta un dispositivo desvinculado seguía obteniendo token.
     if (known.length && Number(known[0].revoked) === 1) return res.status(401).json({ error: 'DEVICE_REVOKED' });
@@ -416,11 +437,28 @@ async function handleToken(req, res) {
 
         await queryDB(`INSERT INTO devices (device_id, license_key, name, last_seen, paired_at, revoked) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0) ON CONFLICT(license_key, device_id) DO UPDATE SET name = excluded.name, revoked = 0, revoked_at = NULL, last_seen = CURRENT_TIMESTAMP`, [device_id, effectiveKey, name || 'Sin nombre']);
     } else {
-        // v49: migración de clave a prueba de colisiones de PK compuesta
-        // (rotación old->new): se elimina la fila destino si existiera y se
-        // mueve la fila del dispositivo a la clave efectiva.
-        await queryDB(`DELETE FROM devices WHERE license_key = ? AND device_id = ?`, [effectiveKey, device_id]);
-        await queryDB(`UPDATE devices SET license_key = ?, last_seen = CURRENT_TIMESTAMP WHERE device_id = ?`, [effectiveKey, device_id]);
+        // v49r2: consolidación a UNA sola fila por cuenta (rotación old->new)
+        // a prueba de colisiones de PK compuesta y limitada a la MISMA
+        // cuenta: un equipo usado en dos empresas distintas jamás mueve ni
+        // borra filas ajenas. Gana la fila de la clave efectiva; en su
+        // defecto, la heredada más reciente.
+        const scope = `SELECT l2.license_key FROM licencias l2
+                       JOIN clientes c2 ON l2.cliente_id = c2.id
+                       WHERE LOWER(TRIM(c2.email)) = ?`;
+        if (scopeEmail) {
+            await queryDB(
+                `DELETE FROM devices
+                 WHERE device_id = ? AND (license_key = ? OR license_key IN (${scope}))
+                   AND rowid NOT IN (
+                       SELECT rowid FROM devices
+                       WHERE device_id = ? AND (license_key = ? OR license_key IN (${scope}))
+                       ORDER BY (license_key = ?) DESC, last_seen DESC LIMIT 1)`,
+                [device_id, effectiveKey, scopeEmail, device_id, effectiveKey, scopeEmail, effectiveKey]);
+        }
+        await queryDB(
+            `UPDATE devices SET license_key = ?, last_seen = CURRENT_TIMESTAMP
+             WHERE device_id = ? AND (license_key = ? OR license_key IN (${scope}))`,
+            [effectiveKey, device_id, effectiveKey, scopeEmail || 'none']);
     }
     const token = jwt.sign({ licenseKey: effectiveKey, deviceId: device_id, email: searchEmail || lic.email, isExpired: effectiveIsExpired }, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
     return res.status(200).json({ token, expiresIn: 3600, is_expired: effectiveIsExpired, license_key: effectiveKey });
