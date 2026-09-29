@@ -86,6 +86,14 @@ export default async function handler(req, res) {
 
         let accountEmail = isPlaceholder ? normalizedEmail : clientEmail;
 
+        if (isPlaceholder && normalizedEmail && !normalizedEmail.startsWith('placeholder-')) {
+            await connection.execute(
+                `UPDATE clientes SET email = ? WHERE id = ?`,
+                [normalizedEmail, lic.cliente_id]
+            );
+            accountEmail = normalizedEmail;
+        }
+
         if (!usado) {
             // Ganador atómico de la activación
             const [result] = await connection.execute(
@@ -94,23 +102,25 @@ export default async function handler(req, res) {
                 [license_key]
             );
             const won = Number(result.affectedRows || 0) === 1;
-            if (won) {
-                if (isPlaceholder) {
-                    await connection.execute(
-                        `UPDATE clientes SET email = ? WHERE id = ?`,
-                        [normalizedEmail, lic.cliente_id]
-                    );
-                }
-                if (tipo === 'saas') {
-                    await connection.execute(
-                        `UPDATE detalles_saas SET last_check = datetime('now') WHERE licencia_id = ?`,
-                        [lic.lic_id]
-                    );
-                }
+            if (won && tipo === 'saas') {
+                await connection.execute(
+                    `UPDATE detalles_saas SET last_check = datetime('now') WHERE licencia_id = ?`,
+                    [lic.lic_id]
+                );
             }
-            // Si no ganó, otro dispositivo activó en paralelo: continúa como
-            // re-activación (el correo ya fue validado arriba).
         }
+
+        // Si este cliente renueva y tiene otros dispositivos activos en una licencia previa,
+        // migrarlos atómicamente a la nueva clave para sincronización inmediata
+        try {
+            await connection.execute(
+                `UPDATE devices SET license_key = ?, revoked = 0, last_seen = datetime('now')
+                 WHERE revoked = 0 AND license_key IN (
+                     SELECT license_key FROM licencias WHERE cliente_id = ? AND license_key != ?
+                 )`,
+                [license_key, lic.cliente_id, license_key]
+            );
+        } catch (_) {}
 
         // Registro del dispositivo con límite (423 = device_limit)
         const [active] = await connection.execute(

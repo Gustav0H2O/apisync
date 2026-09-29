@@ -302,10 +302,25 @@ async function handleRename(req, res) {
 // --- HANDLER TOKEN (LOGIN) ---
 
 async function handleToken(req, res) {
-    const { license_key, device_id, name } = req.body || {};
+    const { license_key, device_id, name, email } = req.body || {};
     if (!license_key || !device_id) return res.status(400).json({ error: 'Faltan parámetros' });
     const cleanKey = String(license_key).trim().toUpperCase();
-    const rows = await queryDB(`SELECT l.id, l.tipo, c.email, ds.fecha_vencimiento FROM licencias l JOIN clientes c ON l.cliente_id = c.id LEFT JOIN detalles_saas ds ON ds.licencia_id = l.id WHERE UPPER(TRIM(l.license_key)) = ? AND l.usado = 1`, [cleanKey]);
+    const reqEmail = String(email || '').trim().toLowerCase();
+
+    let rows = await queryDB(`SELECT l.id, l.tipo, c.email, ds.fecha_vencimiento FROM licencias l JOIN clientes c ON l.cliente_id = c.id LEFT JOIN detalles_saas ds ON ds.licencia_id = l.id WHERE UPPER(TRIM(l.license_key)) = ? AND l.usado = 1`, [cleanKey]);
+    
+    if (!rows.length && reqEmail && !reqEmail.startsWith('placeholder-')) {
+        rows = await queryDB(
+            `SELECT l.id, l.tipo, c.email, ds.fecha_vencimiento
+             FROM licencias l
+             JOIN clientes c ON l.cliente_id = c.id
+             LEFT JOIN detalles_saas ds ON ds.licencia_id = l.id
+             WHERE LOWER(TRIM(c.email)) = ? AND l.usado = 1
+             ORDER BY CASE WHEN LOWER(TRIM(l.tipo)) = 'unique' THEN '9999-12-31' ELSE COALESCE(ds.fecha_vencimiento, '1970-01-01') END DESC, l.id DESC LIMIT 1`,
+            [reqEmail]
+        );
+    }
+
     if (!rows.length) return res.status(401).json({ error: 'Licencia inválida o no activa' });
     const lic = rows[0];
     const tipo = String(lic.tipo || 'unique').trim().toLowerCase();
@@ -317,7 +332,11 @@ async function handleToken(req, res) {
     let effectiveExpDate = expDate;
     let effectiveIsExpired = isExpired;
 
-    if (isExpired && lic.email && !lic.email.startsWith('placeholder-')) {
+    const searchEmail = (reqEmail && !reqEmail.startsWith('placeholder-'))
+        ? reqEmail
+        : ((lic.email && !lic.email.startsWith('placeholder-')) ? String(lic.email).trim().toLowerCase() : '');
+
+    if (isExpired && searchEmail) {
         const altRows = await queryDB(
             `SELECT l.id, l.license_key, l.tipo, ds.fecha_vencimiento
              FROM licencias l
@@ -325,7 +344,7 @@ async function handleToken(req, res) {
              LEFT JOIN detalles_saas ds ON ds.licencia_id = l.id
              WHERE LOWER(TRIM(c.email)) = ? AND l.usado = 1
              ORDER BY CASE WHEN LOWER(TRIM(l.tipo)) = 'unique' THEN '9999-12-31' ELSE COALESCE(ds.fecha_vencimiento, '1970-01-01') END DESC, l.id DESC LIMIT 1`,
-            [lic.email.trim().toLowerCase()]
+            [searchEmail]
         );
         if (altRows.length) {
             const altExp = parseExpirationDate(altRows[0].fecha_vencimiento);
@@ -340,7 +359,16 @@ async function handleToken(req, res) {
         }
     }
     
-    const known = await queryDB(`SELECT revoked FROM devices WHERE device_id = ? AND (license_key = ? OR license_key = ?) LIMIT 1`, [device_id, cleanKey, effectiveKey]);
+    const known = await queryDB(
+        `SELECT revoked FROM devices WHERE device_id = ? AND (
+            license_key = ? OR license_key = ? OR license_key IN (
+                SELECT l2.license_key FROM licencias l2
+                JOIN clientes c2 ON l2.cliente_id = c2.id
+                WHERE LOWER(TRIM(c2.email)) = ?
+            )
+        ) LIMIT 1`,
+        [device_id, cleanKey, effectiveKey, searchEmail || 'none']
+    );
     // Number(): libsql (intMode 'string') devuelve revoked como "1" — con la
     // comparación estricta un dispositivo desvinculado seguía obteniendo token.
     if (known.length && Number(known[0].revoked) === 1) return res.status(401).json({ error: 'DEVICE_REVOKED' });
@@ -369,7 +397,7 @@ async function handleToken(req, res) {
     } else {
         await queryDB(`UPDATE devices SET license_key = ?, last_seen = CURRENT_TIMESTAMP WHERE device_id = ?`, [effectiveKey, device_id]);
     }
-    const token = jwt.sign({ licenseKey: effectiveKey, deviceId: device_id, email: lic.email, isExpired: effectiveIsExpired }, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
+    const token = jwt.sign({ licenseKey: effectiveKey, deviceId: device_id, email: searchEmail || lic.email, isExpired: effectiveIsExpired }, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
     return res.status(200).json({ token, expiresIn: 3600, is_expired: effectiveIsExpired, license_key: effectiveKey });
 }
 
