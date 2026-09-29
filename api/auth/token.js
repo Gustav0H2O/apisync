@@ -50,7 +50,7 @@ async function handleGenerate(req, res) {
             });
         }
         
-        const recentRevoked = await queryDB(`SELECT datetime(last_seen, '+' || ? || ' hours') AS cooldown_until FROM devices WHERE license_key = ? AND revoked = 1 AND (julianday('now') - julianday(last_seen)) * 24 < ? ORDER BY last_seen DESC LIMIT 1`, [cooldownHours, user.licenseKey, cooldownHours]);
+        const recentRevoked = await queryDB(`SELECT datetime(COALESCE(revoked_at, last_seen), '+' || ? || ' hours') AS cooldown_until FROM devices WHERE license_key = ? AND revoked = 1 AND (julianday('now') - julianday(COALESCE(revoked_at, last_seen))) * 24 < ? ORDER BY COALESCE(revoked_at, last_seen) DESC LIMIT 1`, [cooldownHours, user.licenseKey, cooldownHours]);
         if (recentRevoked.length) {
             return res.status(429).json({ 
                 error: `Debes esperar ${policy.pairCooldownDays} días para vincular un nuevo dispositivo`, 
@@ -79,8 +79,24 @@ async function handleConfirm(req, res) {
                 code: 'DEVICE_REVOKED' 
             });
         }
+
+        // v49: confirm NO bypasea límite/cooldown. Verificación best-effort
+        // (el reintento del mismo dispositivo ya activo siempre se permite).
+        const policy = await getLicensePolicy(licenseKey);
+        const [cnt] = await queryDB(`SELECT COUNT(*) AS c FROM devices WHERE license_key = ? AND revoked = 0 AND device_id != ?`, [licenseKey, device_id]);
+        const alreadyActive = await queryDB(`SELECT 1 AS x FROM devices WHERE license_key = ? AND device_id = ? AND revoked = 0 LIMIT 1`, [licenseKey, device_id]);
+        if (!alreadyActive.length && Number(cnt.c || 0) >= policy.maxDevicesAllowed) {
+            return res.status(403).json({ error: 'Límite de dispositivos alcanzado', max_devices_allowed: policy.maxDevicesAllowed });
+        }
+        if (!alreadyActive.length && policy.pairCooldownDays > 0) {
+            const cooldownHours = policy.pairCooldownDays * 24;
+            const recentRevoked = await queryDB(`SELECT 1 AS x FROM devices WHERE license_key = ? AND revoked = 1 AND (julianday('now') - julianday(COALESCE(revoked_at, last_seen))) * 24 < ? LIMIT 1`, [licenseKey, cooldownHours]);
+            if (recentRevoked.length) {
+                return res.status(429).json({ error: `Debes esperar ${policy.pairCooldownDays} días para vincular un nuevo dispositivo`, code: 'PAIR_COOLDOWN' });
+            }
+        }
         
-        await queryDB(`INSERT INTO devices (device_id, license_key, name, last_seen, paired_at, revoked) VALUES (?, ?, ?, datetime('now'), datetime('now'), 0) ON CONFLICT(device_id) DO UPDATE SET revoked = 0, paired_at = datetime('now'), license_key = excluded.license_key, name = excluded.name, last_seen = datetime('now')`, [device_id, licenseKey, device_name || 'Nuevo Dispositivo']);
+        await queryDB(`INSERT INTO devices (device_id, license_key, name, last_seen, paired_at, revoked) VALUES (?, ?, ?, datetime('now'), datetime('now'), 0) ON CONFLICT(license_key, device_id) DO UPDATE SET revoked = 0, revoked_at = NULL, paired_at = datetime('now'), name = excluded.name, last_seen = datetime('now')`, [device_id, licenseKey, device_name || 'Nuevo Dispositivo']);
         await queryDB(`UPDATE pairing_sessions SET confirmed = 1, confirmed_device_id = ? WHERE session_id = ?`, [device_id, session_id]);
         
         const licRows = await queryDB(
@@ -124,9 +140,14 @@ async function handleLink(req, res) {
     const { target_device_id, name } = req.body || {};
     if (!target_device_id) return res.status(400).json({ error: 'Falta target_device_id' });
     const policy = await getLicensePolicy(user.licenseKey);
-    const [active] = await queryDB(`SELECT COUNT(*) AS c FROM devices WHERE license_key = ? AND revoked = 0 AND device_id != ?`, [user.licenseKey, target_device_id]);
-    if (Number(active.c || 0) >= policy.maxDevicesAllowed) return res.status(403).json({ error: 'Límite de dispositivos alcanzado' });
-    await queryDB(`INSERT INTO devices (device_id, license_key, name, last_seen, paired_at, revoked) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0) ON CONFLICT(device_id) DO UPDATE SET license_key = excluded.license_key, revoked = 0, paired_at = CURRENT_TIMESTAMP, last_seen = CURRENT_TIMESTAMP`, [target_device_id, user.licenseKey, name || 'Dispositivo vinculado']);
+    // v49 fix off-by-one: contar TODOS los activos; si el target ya está
+    // activo, permitir (re-link). El conteo anterior excluía al target y
+    // permitía max+1 dispositivos.
+    const [allActive] = await queryDB(`SELECT COUNT(*) AS c FROM devices WHERE license_key = ? AND revoked = 0`, [user.licenseKey]);
+    const [target] = await queryDB(`SELECT revoked FROM devices WHERE license_key = ? AND device_id = ? LIMIT 1`, [user.licenseKey, target_device_id]);
+    const targetIsActive = target && Number(target.revoked) === 0;
+    if (!targetIsActive && Number(allActive.c || 0) >= policy.maxDevicesAllowed) return res.status(403).json({ error: 'Límite de dispositivos alcanzado', max_devices_allowed: policy.maxDevicesAllowed, active_devices: Number(allActive.c || 0) });
+    await queryDB(`INSERT INTO devices (device_id, license_key, name, last_seen, paired_at, revoked) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0) ON CONFLICT(license_key, device_id) DO UPDATE SET revoked = 0, revoked_at = NULL, paired_at = CURRENT_TIMESTAMP, last_seen = CURRENT_TIMESTAMP`, [target_device_id, user.licenseKey, name || 'Dispositivo vinculado']);
     return res.status(200).json({ success: true });
 }
 
@@ -193,7 +214,7 @@ async function handleUnlink(req, res) {
             );
             if (devRows.length) {
                 await queryDB(
-                    `UPDATE devices SET revoked = 1, last_seen = CURRENT_TIMESTAMP WHERE UPPER(TRIM(license_key)) = ? AND device_id = ?`,
+                    `UPDATE devices SET revoked = 1, revoked_at = CURRENT_TIMESTAMP, last_seen = CURRENT_TIMESTAMP WHERE UPPER(TRIM(license_key)) = ? AND device_id = ?`,
                     [lic, devId]
                 );
                 return res.status(200).json({ ok: true, unlinked_device_id: devId });
@@ -251,9 +272,9 @@ async function handleUnlink(req, res) {
             return res.status(400).json({ error: 'No puedes desvincular el dispositivo actual' });
         }
 
-        // Se eliminó 'revoked_at' ya que no existe en el esquema proporcionado. 
-        // Se usa 'last_seen' para registrar el momento de la desvinculación.
-        await queryDB(`UPDATE devices SET revoked = 1, last_seen = CURRENT_TIMESTAMP WHERE license_key = ? AND device_id = ?`, [effectiveLicense, rowToUnlink.device_id]);
+        // v49: revoked_at canónico (antes solo last_seen, que se reescribía con
+        // heartbeats y rompía el cálculo del cooldown).
+        await queryDB(`UPDATE devices SET revoked = 1, revoked_at = CURRENT_TIMESTAMP, last_seen = CURRENT_TIMESTAMP WHERE license_key = ? AND device_id = ?`, [effectiveLicense, rowToUnlink.device_id]);
         
         const policy = await getLicensePolicy(effectiveLicense);
         const [cooldown] = await queryDB(`SELECT datetime('now', '+' || ? || ' hours') AS cooldown_until`, [policy.pairCooldownDays * 24]);
@@ -384,7 +405,7 @@ async function handleToken(req, res) {
             return res.status(403).json({ error: 'Límite de dispositivos alcanzado' });
         }
 
-        const recentRevoked = await queryDB(`SELECT datetime(last_seen, '+' || ? || ' hours') AS cooldown_until FROM devices WHERE license_key = ? AND revoked = 1 AND (julianday('now') - julianday(last_seen)) * 24 < ? ORDER BY last_seen DESC LIMIT 1`, [cooldownHours, effectiveKey, cooldownHours]);
+        const recentRevoked = await queryDB(`SELECT datetime(COALESCE(revoked_at, last_seen), '+' || ? || ' hours') AS cooldown_until FROM devices WHERE license_key = ? AND revoked = 1 AND (julianday('now') - julianday(COALESCE(revoked_at, last_seen))) * 24 < ? ORDER BY COALESCE(revoked_at, last_seen) DESC LIMIT 1`, [cooldownHours, effectiveKey, cooldownHours]);
         if (recentRevoked.length) {
             return res.status(429).json({ 
                 error: `Debes esperar ${policy.pairCooldownDays} días para vincular un nuevo dispositivo`, 
@@ -393,8 +414,12 @@ async function handleToken(req, res) {
             });
         }
 
-        await queryDB(`INSERT INTO devices (device_id, license_key, name, last_seen, paired_at, revoked) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0) ON CONFLICT(device_id) DO UPDATE SET license_key = excluded.license_key, name = excluded.name, revoked = 0, last_seen = CURRENT_TIMESTAMP`, [device_id, effectiveKey, name || 'Sin nombre']);
+        await queryDB(`INSERT INTO devices (device_id, license_key, name, last_seen, paired_at, revoked) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0) ON CONFLICT(license_key, device_id) DO UPDATE SET name = excluded.name, revoked = 0, revoked_at = NULL, last_seen = CURRENT_TIMESTAMP`, [device_id, effectiveKey, name || 'Sin nombre']);
     } else {
+        // v49: migración de clave a prueba de colisiones de PK compuesta
+        // (rotación old->new): se elimina la fila destino si existiera y se
+        // mueve la fila del dispositivo a la clave efectiva.
+        await queryDB(`DELETE FROM devices WHERE license_key = ? AND device_id = ?`, [effectiveKey, device_id]);
         await queryDB(`UPDATE devices SET license_key = ?, last_seen = CURRENT_TIMESTAMP WHERE device_id = ?`, [effectiveKey, device_id]);
     }
     const token = jwt.sign({ licenseKey: effectiveKey, deviceId: device_id, email: searchEmail || lic.email, isExpired: effectiveIsExpired }, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });

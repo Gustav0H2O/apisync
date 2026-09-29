@@ -30,6 +30,8 @@ export default async function handler(req, res) {
 
         let [rows] = await connection.execute(
             `SELECT l.id AS lic_id, l.license_key, l.tipo, l.usado, c.email AS client_email,
+                    COALESCE(l.max_devices_allowed, 2) AS max_devices_allowed,
+                    COALESCE(l.pair_cooldown_days, 2) AS pair_cooldown_days,
                     ds.fecha_vencimiento
              FROM licencias l
              JOIN clientes c ON l.cliente_id = c.id
@@ -55,6 +57,8 @@ export default async function handler(req, res) {
         if (isCurrentExpired && searchEmail) {
             const [activeRows] = await connection.execute(
                 `SELECT l.id AS lic_id, l.license_key, l.tipo, l.usado, c.email AS client_email,
+                        COALESCE(l.max_devices_allowed, 2) AS max_devices_allowed,
+                        COALESCE(l.pair_cooldown_days, 2) AS pair_cooldown_days,
                         ds.fecha_vencimiento
                  FROM licencias l
                  JOIN clientes c ON l.cliente_id = c.id
@@ -81,13 +85,14 @@ export default async function handler(req, res) {
         const tipo = String(lic.tipo || 'unique').trim().toLowerCase();
 
         // Si se adoptó una clave renovada perteneciente al mismo email, actualizar registro del dispositivo
+        // v49: PK compuesta (license_key, device_id) — el ON CONFLICT(device_id)
+        // anterior falla en Turso tras la migración.
         if (effectiveLicenseKey !== user.licenseKey) {
             await connection.execute(
                 `INSERT INTO devices (device_id, license_key, name, last_seen, paired_at, revoked)
                  VALUES (?, ?, 'Dispositivo Renovado', datetime('now'), datetime('now'), 0)
-                 ON CONFLICT(device_id) DO UPDATE SET
-                   license_key = excluded.license_key,
-                   revoked = 0, last_seen = datetime('now')`,
+                 ON CONFLICT(license_key, device_id) DO UPDATE SET
+                   revoked = 0, revoked_at = NULL, last_seen = datetime('now')`,
                 [user.deviceId, effectiveLicenseKey]
             );
         }
@@ -141,8 +146,11 @@ export default async function handler(req, res) {
         return res.status(200).json({
             status,
             license_key: effectiveLicenseKey,
+            account_key: effectiveLicenseKey,
             license_type: tipo,
             saas_expiration: saasExpiration,
+            max_devices_allowed: Number(lic.max_devices_allowed ?? 2),
+            pair_cooldown_days: Number(lic.pair_cooldown_days ?? 2),
             token: newToken,
             signed_payload,
             signature,

@@ -52,7 +52,8 @@ export default async function handler(req, res) {
     const conflicts = [];
     const rejected = [];
     const aliases = [];
-    const statements = [ensureCursorStatement(user.email)];
+    const accountKey = String(user.licenseKey || '').trim().toUpperCase() || null;
+    const statements = [ensureCursorStatement(user.email, accountKey)];
     const now = new Date().toISOString();
 
     let connection;
@@ -142,9 +143,9 @@ export default async function handler(req, res) {
                 if (!uuid) continue;
                 const existing = existingByUuid.get(uuid) || null;
 
-                // Alcance de cuenta: una fila de OTRA cuenta jamás se toca.
-                if (existing && spec.accountScoped && existing.account_email &&
-                    existing.account_email !== user.email) {
+                // Alcance de cuenta v49: canónico account_key, fallback email (clientes viejos).
+                if (existing && spec.accountScoped && (existing.account_key || existing.account_email) &&
+                    (existing.account_key ? existing.account_key !== accountKey : existing.account_email !== user.email)) {
                     rejected.push({ table, uuid, reason: 'forbidden' });
                     continue;
                 }
@@ -204,9 +205,9 @@ export default async function handler(req, res) {
                         continue;
                     }
 
-                    statements.push(upsertStatement(spec, user.email, row, uuid, incomingVersion, now, physicalCols));
+                    statements.push(upsertStatement(spec, user.email, row, uuid, incomingVersion, now, physicalCols, accountKey));
                     statements.push(...changeLogStatements(
-                        user.email, table, uuid, row.deleted_at ? 'delete' : 'upsert'
+                        user.email, table, uuid, row.deleted_at ? 'delete' : 'upsert', accountKey
                     ));
                     applied.push({ table, uuid, version: incomingVersion });
                     continue;
@@ -224,9 +225,9 @@ export default async function handler(req, res) {
                         const where = spec.businessKey.cols.map(c => `${c} = ?`).join(' AND ');
                         const [found] = await connection.execute(
                             `SELECT * FROM ${spec.remote}
-                             WHERE account_email = ? AND ${where} AND deleted_at IS NULL
+                             WHERE (account_key = ? OR (account_key IS NULL AND account_email = ?)) AND ${where} AND deleted_at IS NULL
                              ORDER BY version DESC LIMIT 1`,
-                            [user.email, ...keyVals]
+                            [accountKey, user.email, ...keyVals]
                         );
                         canonical = found[0] || null;
                     }
@@ -241,7 +242,7 @@ export default async function handler(req, res) {
                         continue;
                     }
                     const finalVersion = toNumber(canonical.version, 1) + 1;
-                    statements.push(upsertStatement(spec, user.email, row, canonicalUuid, finalVersion, now, physicalCols));
+                    statements.push(upsertStatement(spec, user.email, row, canonicalUuid, finalVersion, now, physicalCols, accountKey));
                     // Re-apuntar dependencias relacionales del uuid entrante al canónico
                     if (table === 'invoices') {
                         statements.push({
@@ -273,7 +274,7 @@ export default async function handler(req, res) {
                         });
                     }
                     statements.push(...changeLogStatements(
-                        user.email, table, canonicalUuid, row.deleted_at ? 'delete' : 'upsert'
+                        user.email, table, canonicalUuid, row.deleted_at ? 'delete' : 'upsert', accountKey
                     ));
                     applied.push({ table, uuid: canonicalUuid, version: finalVersion });
                     continue;
@@ -281,9 +282,9 @@ export default async function handler(req, res) {
 
                 // Inserción limpia
                 const finalVersion = Math.max(incomingVersion, 1);
-                statements.push(upsertStatement(spec, user.email, row, uuid, finalVersion, now, physicalCols));
+                statements.push(upsertStatement(spec, user.email, row, uuid, finalVersion, now, physicalCols, accountKey));
                 statements.push(...changeLogStatements(
-                    user.email, table, uuid, row.deleted_at ? 'delete' : 'upsert'
+                    user.email, table, uuid, row.deleted_at ? 'delete' : 'upsert', accountKey
                 ));
                 applied.push({ table, uuid, version: finalVersion });
             }
@@ -303,8 +304,8 @@ export default async function handler(req, res) {
         }
 
         const [seqRows] = await connection.execute(
-            'SELECT COALESCE((SELECT seq FROM account_cursor WHERE account_email = ?), 0) AS seq',
-            [user.email]
+            'SELECT COALESCE((SELECT seq FROM account_cursor WHERE account_key = ? OR (account_key IS NULL AND account_email = ?)), 0) AS seq',
+            [accountKey, user.email]
         );
 
         // Tiempo real: si algo cambió, despertar a los OTROS dispositivos de la
@@ -333,12 +334,16 @@ export default async function handler(req, res) {
     }
 }
 
-function upsertStatement(spec, email, row, uuid, version, now, physicalCols = null) {
+function upsertStatement(spec, email, row, uuid, version, now, physicalCols = null, accountKey = null) {
     const cols = ['uuid'];
     const vals = [uuid];
     if (spec.accountScoped) {
         cols.push('account_email');
         vals.push(email);
+        if (!physicalCols || physicalCols.has('account_key')) {
+            cols.push('account_key');
+            vals.push(accountKey);
+        }
     }
 
     // Filtrar columnas contra las columnas físicas reales de Turso
@@ -370,7 +375,7 @@ function upsertStatement(spec, email, row, uuid, version, now, physicalCols = nu
     vals.push(version, now, row.deleted_at === undefined ? null : row.deleted_at);
 
     const conflictTarget = spec.conflictTarget || '(uuid)';
-    const updatable = cols.filter(c => c !== 'uuid' && c !== 'account_email');
+    const updatable = cols.filter(c => c !== 'uuid' && c !== 'account_email' && c !== 'account_key');
     let sql = `INSERT INTO ${spec.remote} (${cols.join(', ')})
                VALUES (${cols.map(() => '?').join(', ')})
                ON CONFLICT ${conflictTarget} DO UPDATE SET

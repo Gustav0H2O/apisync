@@ -111,10 +111,19 @@ export default async function handler(req, res) {
         }
 
         // Si este cliente renueva y tiene otros dispositivos activos en una licencia previa,
-        // migrarlos atómicamente a la nueva clave para sincronización inmediata
+        // migrarlos atómicamente a la nueva clave para sincronización inmediata.
+        // v49: a prueba de colisiones de PK compuesta (license_key, device_id):
+        // primero se eliminan las filas destino que colisionarían.
         try {
             await connection.execute(
-                `UPDATE devices SET license_key = ?, revoked = 0, last_seen = datetime('now')
+                `DELETE FROM devices WHERE license_key = ? AND device_id IN (
+                     SELECT device_id FROM devices WHERE revoked = 0 AND license_key IN (
+                       SELECT license_key FROM licencias WHERE cliente_id = ? AND license_key != ?
+                     ))`,
+                [license_key, lic.cliente_id, license_key]
+            );
+            await connection.execute(
+                `UPDATE devices SET license_key = ?, revoked = 0, revoked_at = NULL, last_seen = datetime('now')
                  WHERE revoked = 0 AND license_key IN (
                      SELECT license_key FROM licencias WHERE cliente_id = ? AND license_key != ?
                  )`,
@@ -135,9 +144,9 @@ export default async function handler(req, res) {
         await connection.execute(
             `INSERT INTO devices (device_id, license_key, name, last_seen, paired_at, revoked)
              VALUES (?, ?, ?, datetime('now'), datetime('now'), 0)
-             ON CONFLICT(device_id) DO UPDATE SET
-               license_key = excluded.license_key, name = excluded.name,
-               revoked = 0, last_seen = datetime('now'), paired_at = datetime('now')`,
+             ON CONFLICT(license_key, device_id) DO UPDATE SET
+               name = excluded.name,
+               revoked = 0, revoked_at = NULL, last_seen = datetime('now'), paired_at = datetime('now')`,
             [device_id, license_key, device_name || 'Nuevo Dispositivo']
         );
 

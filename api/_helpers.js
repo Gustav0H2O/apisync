@@ -75,10 +75,23 @@ export async function isDeviceRevoked(user) {
 
     try {
         const connection = getConnection();
-        const [rows] = await connection.execute(
-            `SELECT revoked, license_key FROM devices WHERE device_id = ? LIMIT 1`,
-            [user.deviceId]
-        );
+        // v49: PK compuesta (license_key, device_id). Buscar scoped por licencia
+        // para evitar colisión cross-cuenta; fallback legacy por device_id solo.
+        const licenseKey = user.licenseKey || user.effectiveKey || null;
+        let rows = [];
+        if (licenseKey) {
+            [rows] = await connection.execute(
+                `SELECT revoked, license_key, revoked_at FROM devices WHERE license_key = ? AND device_id = ? LIMIT 1`,
+                [licenseKey, user.deviceId]
+            );
+        }
+        if (!rows.length) {
+            const [legacy] = await connection.execute(
+                `SELECT revoked, license_key FROM devices WHERE device_id = ? LIMIT 1`,
+                [user.deviceId]
+            );
+            rows = legacy;
+        }
 
         if (!rows.length) {
             console.warn(`⚠️ [Revoked Check] Dispositivo ${user.deviceId} no encontrado en DB.`);
@@ -104,6 +117,19 @@ export async function isDeviceRevoked(user) {
         }
         return true; // fail-closed
     }
+}
+
+/**
+ * Identidad canónica de cuenta v49: license_key (estable ante cambios de
+ * email o rotaciones). El email queda como display/fallback para clientes viejos.
+ */
+export function accountKeyOf(user) {
+    const k = String(user?.licenseKey || user?.effectiveKey || user?.license_key || '').trim().toUpperCase();
+    return k || null;
+}
+
+export function accountEmailOf(user) {
+    return String(user?.email || '').trim().toLowerCase() || null;
 }
 
 export async function queryDB(sql, params) {

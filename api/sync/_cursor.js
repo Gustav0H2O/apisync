@@ -29,14 +29,15 @@ export default async function handler(req, res) {
         const connection = getConnection();
 
         async function fetchCursorState() {
+            const accountKey = String(user.licenseKey || '').trim().toUpperCase() || null;
             const [rows] = await connection.execute(
                 `SELECT
-                    COALESCE((SELECT seq FROM account_cursor WHERE account_email = ?), 0) AS seq,
+                    COALESCE((SELECT seq FROM account_cursor WHERE account_key = ? OR (account_key IS NULL AND account_email = ?)), 0) AS seq,
                     COALESCE((SELECT MAX(id) FROM app_notifications
                               WHERE target_email IS NULL OR target_email = ?), 0) AS notif_seq,
                     (SELECT COUNT(*) FROM app_notifications
                       WHERE is_active = 1 AND (target_email IS NULL OR target_email = ?)) AS notif_active`,
-                [user.email, user.email, user.email]
+                [accountKey, user.email, user.email, user.email]
             );
 
             const row = rows[0] || {};

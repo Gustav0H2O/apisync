@@ -30,11 +30,12 @@ export default async function handler(req, res) {
     try {
         const connection = getConnection();
 
+        const accountKey = String(user.licenseKey || '').trim().toUpperCase() || null;
         const [entries] = await connection.execute(
             `SELECT seq, table_name, row_uuid FROM change_log
-             WHERE account_email = ? AND seq > ?
+             WHERE (account_key = ? OR (account_key IS NULL AND account_email = ?)) AND seq > ?
              ORDER BY seq ASC LIMIT ?`,
-            [user.email, since, limit]
+            [accountKey, user.email, since, limit]
         );
 
         if (!entries.length) {
@@ -82,16 +83,17 @@ export default async function handler(req, res) {
 
             let sql;
             let args;
+            const accountKey = String(user.licenseKey || '').trim().toUpperCase() || null;
             if (!spec || spec.accountScoped) {
                 sql = `SELECT * FROM ${remote}
-                       WHERE account_email = ? AND uuid IN (${placeholders})`;
-                args = [user.email, ...uuids];
+                       WHERE (account_key = ? OR (account_key IS NULL AND account_email = ?)) AND uuid IN (${placeholders})`;
+                args = [accountKey, user.email, ...uuids];
             } else {
                 // invoice_items: el alcance de cuenta viene por la factura padre si no tiene propio.
                 sql = `SELECT i.* FROM ${remote} i
                        JOIN ${spec.parent.table} p ON p.uuid = i.${spec.parent.fk}
-                       WHERE p.account_email = ? AND i.uuid IN (${placeholders})`;
-                args = [user.email, ...uuids];
+                       WHERE (p.account_key = ? OR (p.account_key IS NULL AND p.account_email = ?)) AND i.uuid IN (${placeholders})`;
+                args = [accountKey, user.email, ...uuids];
             }
 
             try {
