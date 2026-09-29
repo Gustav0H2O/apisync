@@ -1,17 +1,17 @@
 import jwt from 'jsonwebtoken';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 /**
  * Envío de notificaciones push vía Firebase Cloud Messaging (HTTP v1).
  *
  * Autenticación por CUENTA DE SERVICIO: la variable de entorno
  * `FIREBASE_SERVICE_ACCOUNT` contiene el JSON descargado de Firebase
- * (Configuración → Cuentas de servicio → Generar clave privada). Con su
- * private_key se firma un JWT que se canjea por un access token OAuth2, y con
- * ese token se llama al endpoint v1 de FCM.
- *
- * TODO en este módulo es best-effort: si falta la config o la columna
- * fcm_token aún no existe en Turso, NO se lanza — el sync/registro siguen
- * funcionando, solo que sin push (fallback al polling existente).
+ * o bien se lee directamente de firebase-service-account.json.
  */
 
 let _cachedAccessToken = null;
@@ -19,18 +19,32 @@ let _cachedExpiry = 0; // epoch segundos
 
 function getServiceAccount() {
     const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
-    if (!raw) return null;
-    try {
-        return JSON.parse(raw);
-    } catch (_) {
-        // Permitir también el JSON codificado en base64 (por si Vercel recorta
-        // saltos de línea del private_key al pegarlo crudo).
+    if (raw) {
         try {
-            return JSON.parse(Buffer.from(raw, 'base64').toString('utf8'));
+            return JSON.parse(raw);
         } catch (_) {
-            return null;
+            try {
+                return JSON.parse(Buffer.from(raw, 'base64').toString('utf8'));
+            } catch (_) {}
         }
     }
+
+    const possiblePaths = [
+        path.resolve(__dirname, '../firebase-service-account.json'),
+        path.resolve(process.cwd(), 'firebase-service-account.json'),
+        path.resolve(process.cwd(), '../factuflow/flactuflow-firebase-adminsdk-fbsvc-60b89746cc.json'),
+        path.resolve(process.cwd(), '../FactuDev/firebase-service-account.json')
+    ];
+
+    for (const p of possiblePaths) {
+        try {
+            if (fs.existsSync(p)) {
+                return JSON.parse(fs.readFileSync(p, 'utf8'));
+            }
+        } catch (_) {}
+    }
+
+    return null;
 }
 
 export function fcmConfigured() {
@@ -39,7 +53,7 @@ export function fcmConfigured() {
 
 function getProjectId() {
     const sa = getServiceAccount();
-    return (sa && sa.project_id) || process.env.FIREBASE_PROJECT_ID || null;
+    return (sa && sa.project_id) || process.env.FIREBASE_PROJECT_ID || 'flactuflow';
 }
 
 async function getAccessToken() {
@@ -87,7 +101,7 @@ async function getAccessToken() {
  *    app para sincronizar sin mostrar nada).
  * - `data`: pares clave/valor (se fuerzan a String, requisito de FCM).
  */
-export async function sendToTokens(tokens, { notification, data } = {}) {
+export async function sendToTokens(tokens, { notification, data, priority = 'high', image = null, channelId = 'factuflow_system_alerts' } = {}) {
     const unique = [...new Set((tokens || []).filter(Boolean))];
     if (!unique.length) return { sent: 0, invalidTokens: [] };
     if (!fcmConfigured()) {
@@ -115,11 +129,38 @@ export async function sendToTokens(tokens, { notification, data } = {}) {
     await Promise.all(
         unique.map(async (token) => {
             const message = { token };
-            if (notification) message.notification = notification;
+            if (notification) {
+                message.notification = {
+                    title: notification.title,
+                    body: notification.body,
+                    ...(image ? { image } : {})
+                };
+            }
             if (Object.keys(dataStr).length) message.data = dataStr;
 
-            // Alta prioridad: despierta el dispositivo aunque esté en reposo.
-            message.android = { priority: 'high' };
+            // Android configuration compatible con FactuFlow (ic_notification + channel)
+            message.android = {
+                priority: priority === 'normal' ? 'normal' : 'high',
+            };
+            if (notification) {
+                message.android.notification = {
+                    icon: 'ic_notification',
+                    color: '#1E88E5',
+                    sound: 'default',
+                    channelId: channelId || 'factuflow_system_alerts',
+                    ...(image ? { imageUrl: image } : {})
+                };
+            }
+
+            // WebPush configuration para clientes web
+            message.webpush = {
+                notification: {
+                    icon: '/assets/images/ic_notification.png',
+                    badge: '/assets/images/ic_notification.png',
+                    ...(image ? { image } : {})
+                }
+            };
+
             if (!notification) {
                 // Solo-datos: content-available para que iOS despierte en background.
                 message.apns = {
