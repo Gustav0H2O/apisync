@@ -71,6 +71,14 @@ export default async function handler(req, res) {
             return res.status(409).json({ error: 'already_used' });
         }
 
+        const expDate = parseExpirationDate(lic.fecha_vencimiento);
+        if (tipo === 'saas' && expDate && expDate < new Date()) {
+            return res.status(403).json({
+                error: 'expired',
+                message: 'Esta licencia ya está vencida. Adquiere una nueva licencia o renueva tu suscripción.'
+            });
+        }
+
         let accountEmail = isPlaceholder ? normalizedEmail : clientEmail;
 
         if (!usado) {
@@ -118,7 +126,6 @@ export default async function handler(req, res) {
             [device_id, license_key, device_name || 'Nuevo Dispositivo']
         );
 
-        const expDate = parseExpirationDate(lic.fecha_vencimiento);
         const saasExpiration = tipo === 'saas' && expDate
             ? expDate.toISOString()
             : null;
