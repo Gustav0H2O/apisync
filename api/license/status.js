@@ -18,7 +18,7 @@ export default async function handler(req, res) {
     if (req.method !== 'GET') return res.status(405).end();
     if (!requireJwtSecret(res)) return;
 
-    const user = verifyToken(req);
+    const user = verifyToken(req, { ignoreExpiration: true });
     if (!user) return res.status(401).json({ error: 'No autorizado' });
 
     try {

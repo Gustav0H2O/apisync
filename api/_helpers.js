@@ -44,7 +44,7 @@ export function requireJwtSecret(res) {
     return true;
 }
 
-export function verifyToken(req) {
+export function verifyToken(req, options = {}) {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return null;
@@ -52,7 +52,7 @@ export function verifyToken(req) {
 
     const token = authHeader.split(' ')[1];
     try {
-        return jwt.verify(token, process.env.JWT_SECRET || JWT_SECRET);
+        return jwt.verify(token, process.env.JWT_SECRET || JWT_SECRET, options);
     } catch (err) {
         return null;
     }

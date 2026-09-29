@@ -307,11 +307,11 @@ async function handleToken(req, res) {
     const cleanKey = String(license_key).trim().toUpperCase();
     const reqEmail = String(email || '').trim().toLowerCase();
 
-    let rows = await queryDB(`SELECT l.id, l.tipo, c.email, ds.fecha_vencimiento FROM licencias l JOIN clientes c ON l.cliente_id = c.id LEFT JOIN detalles_saas ds ON ds.licencia_id = l.id WHERE UPPER(TRIM(l.license_key)) = ? AND l.usado = 1`, [cleanKey]);
+    let rows = await queryDB(`SELECT l.id, l.license_key, l.tipo, c.email, ds.fecha_vencimiento FROM licencias l JOIN clientes c ON l.cliente_id = c.id LEFT JOIN detalles_saas ds ON ds.licencia_id = l.id WHERE UPPER(TRIM(l.license_key)) = ? AND l.usado = 1`, [cleanKey]);
     
     if (!rows.length && reqEmail && !reqEmail.startsWith('placeholder-')) {
         rows = await queryDB(
-            `SELECT l.id, l.tipo, c.email, ds.fecha_vencimiento
+            `SELECT l.id, l.license_key, l.tipo, c.email, ds.fecha_vencimiento
              FROM licencias l
              JOIN clientes c ON l.cliente_id = c.id
              LEFT JOIN detalles_saas ds ON ds.licencia_id = l.id
@@ -327,7 +327,7 @@ async function handleToken(req, res) {
     const expDate = parseExpirationDate(lic.fecha_vencimiento);
     const isExpired = tipo === 'saas' && expDate && expDate < new Date();
 
-    let effectiveKey = cleanKey;
+    let effectiveKey = (lic.license_key ? String(lic.license_key).trim().toUpperCase() : cleanKey);
     let effectiveTipo = tipo;
     let effectiveExpDate = expDate;
     let effectiveIsExpired = isExpired;
@@ -351,7 +351,7 @@ async function handleToken(req, res) {
             const altTipo = String(altRows[0].tipo || 'unique').trim().toLowerCase();
             const altValid = altTipo === 'unique' || (altExp && altExp >= new Date());
             if (altValid) {
-                effectiveKey = altRows[0].license_key;
+                effectiveKey = String(altRows[0].license_key).trim().toUpperCase();
                 effectiveTipo = altTipo;
                 effectiveExpDate = altExp;
                 effectiveIsExpired = false;
