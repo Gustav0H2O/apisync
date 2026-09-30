@@ -389,11 +389,17 @@ async function handleToken(req, res) {
     let effectiveExpDate = expDate;
     let effectiveIsExpired = isExpired;
 
-    const searchEmail = (reqEmail && !reqEmail.startsWith('placeholder-'))
-        ? reqEmail
-        : ((lic.email && !lic.email.startsWith('placeholder-')) ? String(lic.email).trim().toLowerCase() : '');
+    // El email de la LICENCIA manda. El que trae el cliente se usa solo para
+    // el alcance del token, nunca para decidir a qué cuenta pertenece la caja.
+    const licenseEmail = (lic.email && !String(lic.email).startsWith('placeholder-'))
+        ? String(lic.email).trim().toLowerCase()
+        : ((reqEmail && !reqEmail.startsWith('placeholder-')) ? String(reqEmail).trim().toLowerCase() : '');
 
-    if (isExpired && searchEmail) {
+    if (isExpired && licenseEmail) {
+        // Solo se consideran licencias de ESTA misma cuenta. Antes se buscaba
+        // por el email que enviaba el cliente, así que una caja con una sesión
+        // vieja (email de otra cuenta) se emparejaba contra la cuenta que
+        // fuera: el dispositivo cambiaba de dueño sin que nadie lo pidiera.
         const altRows = await queryDB(
             `SELECT l.id, l.license_key, l.tipo, ds.fecha_vencimiento
              FROM licencias l
@@ -401,7 +407,7 @@ async function handleToken(req, res) {
              LEFT JOIN detalles_saas ds ON ds.licencia_id = l.id
              WHERE LOWER(TRIM(c.email)) = ? AND l.usado = 1
              ORDER BY CASE WHEN LOWER(TRIM(l.tipo)) = 'unique' THEN '9999-12-31' ELSE COALESCE(ds.fecha_vencimiento, '1970-01-01') END DESC, l.id DESC LIMIT 1`,
-            [searchEmail]
+            [licenseEmail]
         );
         if (altRows.length) {
             const altExp = parseExpirationDate(altRows[0].fecha_vencimiento);
@@ -422,9 +428,10 @@ async function handleToken(req, res) {
     // LIMIT 1 sin orden podía devolver una fila revocada vieja y el equipo
     // quedaba como DEVICE_REVOKED justo al renovar. Si TODA la cuenta solo
     // tiene filas revocadas, el veto del admin se respeta (401).
-    const scopeEmail = (searchEmail && !searchEmail.startsWith('placeholder-'))
-        ? searchEmail
-        : ((lic.email && !String(lic.email).startsWith('placeholder-')) ? String(lic.email).trim().toLowerCase() : '');
+    // El alcance es el de la LICENCIA, no el que dice el cliente: buscar
+    // revocaciones por un email ajeno hacía que la caja ignorase su propia
+    // revocación o se saltara el veto de una cuenta que no es la suya.
+    const scopeEmail = licenseEmail;
     let known = [];
     {
         const effRows = await queryDB(
@@ -496,7 +503,7 @@ async function handleToken(req, res) {
              WHERE device_id = ? AND (license_key = ? OR license_key IN (${scope}))`,
             [effectiveKey, device_id, effectiveKey, scopeEmail || 'none']);
     }
-    const token = jwt.sign({ licenseKey: effectiveKey, deviceId: device_id, email: searchEmail || lic.email, isExpired: effectiveIsExpired }, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
+    const token = jwt.sign({ licenseKey: effectiveKey, deviceId: device_id, email: scopeEmail || lic.email, isExpired: effectiveIsExpired }, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
     return res.status(200).json({ token, expiresIn: 3600, is_expired: effectiveIsExpired, license_key: effectiveKey });
 }
 
