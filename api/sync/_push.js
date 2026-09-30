@@ -9,6 +9,9 @@ import { ensureMirrorTables, getTableColumns } from './_ensure.js';
 import { resolveSpec, physicalColumns, writableColumns } from './_registry.js';
 import { sendToLicense } from '../_fcm.js';
 
+// undefined -> NULL antes de enviar a Turso (libsql no acepta undefined).
+const mapP = (arr) => arr.map(v => v === undefined ? null : v);
+
 /**
  * POST /api/sync/push  (auth JWT) — protocolo v47 (change-feed)
  *
@@ -490,9 +493,17 @@ async function buildProfileStatements(connection, email, profile, statements) {
     let updateSql = `UPDATE clientes SET ${setClauses.join(', ')}`;
     const argsList = profileArgs;
 
+    // Todo lo no identitario también se empaqueta en el JSON para que la
+    // nube hable un solo idioma con los clientes (las columnas son caché).
     if (hasConfigDataCol) {
+        const configDataObj = {};
+        for (const [k, v] of Object.entries(profile)) {
+            if (!['business_name', 'slogan', 'rif', 'address', 'user_name', 'user_phone', 'version', 'email'].includes(k)) {
+                configDataObj[k] = v;
+            }
+        }
         updateSql += `, config_data = json_patch(COALESCE(config_data, '{}'), ?)`;
-        argsList.push(configDataJson);
+        argsList.push(JSON.stringify(configDataObj));
     }
 
     updateSql += `, updated_at = CURRENT_TIMESTAMP WHERE email = ? AND version < ?`;
