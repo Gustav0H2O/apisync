@@ -27,7 +27,7 @@ import { TABLE_SPECS, DEPENDENCY_GRAPH, CORE_TABLE_RULES } from './_tables.js';
 const REGISTRY_TABLE = 'sync_table_registry';
 const CACHE_MS = 60_000; // la lambda suele estar caliente; evita leer en cada push
 
-let cache = { at: 0, registry: null, columns: new Map() };
+let cache = { at: 0, registry: null, columns: new Map(), pk: new Map() };
 
 function nowMs() {
     return Date.now();
@@ -59,7 +59,7 @@ function parseJson(value, fallback) {
 async function readRegistry(connection) {
     if (cache.registry && nowMs() - cache.at < CACHE_MS) return cache.registry;
     if (!(await tableExists(connection, REGISTRY_TABLE))) {
-        cache = { at: nowMs(), registry: null, columns: new Map() };
+        cache = { at: nowMs(), registry: null, columns: new Map(), pk: cache.pk };
         return null;
     }
     const rows = rowsOf(await connection.execute(
@@ -82,13 +82,13 @@ async function readRegistry(connection) {
             dependsOn: parseJson(row.depends_on, []),
         });
     }
-    cache = { at: nowMs(), registry, columns: cache.columns };
+    cache = { at: nowMs(), registry, columns: cache.columns, pk: cache.pk };
     return registry;
 }
 
 /** Invalida la caché (tests / escrituras de registro en caliente). */
 export function clearRegistryCache() {
-    cache = { at: 0, registry: null, columns: new Map() };
+    cache = { at: 0, registry: null, columns: new Map(), pk: new Map() };
 }
 
 // La conexión de la API (`_db.js`) devuelve `[rows, ...]` al estilo mysql2,
@@ -113,6 +113,31 @@ export async function physicalColumns(connection, table) {
         // Sin introspección: se devuelve vacío y el llamador decide.
     }
     cache.columns.set(table, cols);
+    return cols;
+}
+
+/**
+ * Columnas que forman la PRIMARY KEY de una tabla de Turso, en orden `pk`.
+ * Devuelve `[]` si no se pudo introspeccionar.
+ *
+ * El target del `ON CONFLICT` debe ser EXACTAMENTE la restriccion que SQLite
+ * valida: si la PK es compuesta (p. ej. `sync_taxes` = account_email + uuid)
+ * y se escribe `ON CONFLICT (uuid)`, Turso rechaza el batch completo con
+ * "ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint".
+ */
+async function primaryKeyColumns(connection, table) {
+    if (cache.pk.has(table)) return cache.pk.get(table);
+    let cols = [];
+    try {
+        const info = rowsOf(await connection.execute(`PRAGMA table_info(${table})`));
+        cols = info
+            .filter((r) => r && Number(r.pk) > 0)
+            .sort((a, b) => Number(a.pk) - Number(b.pk))
+            .map((r) => String(r.name));
+    } catch (_) {
+        cols = [];
+    }
+    cache.pk.set(table, cols);
     return cols;
 }
 
@@ -167,10 +192,19 @@ export async function resolveSpec(connection, table) {
         ? declared.filter((c) => physical.size === 0 || physical.has(c))
         : Array.from(physical);
 
+    // Target del ON CONFLICT: la restricción REAL de la tabla. La declaración
+    // de código (`base.conflictTarget`) solo sirve de red de seguridad cuando
+    // la introspección no está disponible.
+    const pkCols = await primaryKeyColumns(connection, remote);
+    const conflictTarget = pkCols.length
+        ? `(${pkCols.join(', ')})`
+        : (base.conflictTarget || '(uuid)');
+
     return {
         local: table,
         remote,
         cols,
+        conflictTarget,
         accountScoped,
         businessKey,
         sealed,
