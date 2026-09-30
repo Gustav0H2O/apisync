@@ -7,8 +7,12 @@ import { getConnection } from '../api/_db.js';
 import { ensureMirrorTables } from '../api/sync/_ensure.js';
 import { TABLE_SPECS } from '../api/sync/_tables.js';
 
-const TURSO_URL = 'libsql://factu-factu.aws-us-east-1.turso.io';
-const TURSO_TOKEN = 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3ODk0MTQyODQsImlkIjoiMDE5ZDhhMzgtMGQwMS03ZmY4LTg4ZDQtZDc4MmMwZDNlYTU2Iiwia2lkIjoiRGtTRlRmQmFtcFFLenVXTkFtRk94MXF1ak4tMmJiLVdDZzFMMnlaTmFSVSIsInJpZCI6IjM0MzgzYzAzLTk5NWEtNGE3OC05MTliLWIzYzFhZTkyNTBlOSJ9.qrSJtS-mMDdtnvm8kCBwYYaEK_MoY1ZiQjtKmCyMQw1As3UoS7R82QWf-JTVUoVxAIhb2m8ELokqDsoph_pwCA';
+const TURSO_URL = process.env.TURSO_URL || 'libsql://factu-factu.aws-us-east-1.turso.io';
+const TURSO_TOKEN = process.env.TURSO_TOKEN;
+if (!TURSO_TOKEN) {
+  console.error('Falta TURSO_TOKEN en el entorno (el token de Turso NUNCA se versiona).');
+  process.exit(1);
+}
 
 process.env.JWT_SECRET = 'live-turso-test-secret';
 process.env.TURSO_URL = TURSO_URL;

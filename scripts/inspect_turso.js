@@ -1,7 +1,8 @@
 import { createClient } from "@libsql/client";
 
 const TURSO_URL = "libsql://factu-factu.aws-us-east-1.turso.io";
-const TURSO_TOKEN = "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3ODk5MTYwMjgsImlkIjoiMDE5ZDhhMzgtMGQwMS03ZmY4LTg4ZDQtZDc4MmMwZDNlYTU2Iiwia2lkIjoiRGtTRlRmQmFtcFFLenVXTkFtRk94MXF1ak4tMmJiLVdDZzFMMnlaTmFSVSIsInJpZCI6IjM0MzgzYzAzLTk5NWEtNGE3OC05MTliLWIzYzFhZTkyNTBlOSJ9.XUv1alrM_7PBVoVvWrQsDfid44LjflYXqJR1lk8CE6SS2ulTD0fWrZvWdO7J7yIOfexgqzuSDl4d5bu7NTg0DA";
+const TURSO_TOKEN = process.env.TURSO_TOKEN;
+if (!TURSO_TOKEN) { console.error("Falta TURSO_TOKEN en el entorno"); process.exit(1); }
 
 const client = createClient({
   url: TURSO_URL,

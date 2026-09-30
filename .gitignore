@@ -19,3 +19,9 @@ limpiar_backup.json
 nuevo_backup.json
 bd_nueva_backup.json
 licencias_generadas.txt
+
+.vercel
+node_modules/
+.env
+.env.*
+
