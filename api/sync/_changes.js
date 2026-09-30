@@ -2,6 +2,7 @@ import { getConnection } from '../_db.js';
 import { verifyToken, isDeviceRevoked, requireJwtSecret, applyCors } from '../_helpers.js';
 import { TABLE_SPECS } from './_tables.js';
 import { resolveSpec } from './_registry.js';
+import { mergeProfileConfig } from './_profile.js';
 
 const MAX_LIMIT = 500;
 
@@ -130,27 +131,9 @@ export default async function handler(req, res) {
                  FROM clientes WHERE email = ? LIMIT 1`,
                 [user.email]
             );
-            const profile = profileRows[0] || null;
-            if (profile && profile.config_data) {
-                try {
-                    const parsed = typeof profile.config_data === 'string'
-                        ? JSON.parse(profile.config_data)
-                        : profile.config_data;
-                    if (parsed && typeof parsed === 'object') {
-                        Object.assign(profile, parsed);
-                    }
-                } catch (_) {}
-            }
-            if (profile && profile.catalog_logo_path) {
-                const logo = profile.catalog_logo_path;
-                if (logo instanceof Buffer) {
-                    profile.catalog_logo_path = logo.toString('base64');
-                } else if (logo && logo.type === 'Buffer' && logo.data) {
-                    profile.catalog_logo_path = Buffer.from(logo.data).toString('base64');
-                } else if (logo instanceof ArrayBuffer) {
-                    profile.catalog_logo_path = Buffer.from(logo).toString('base64');
-                }
-            }
+            // Mezcla del JSON + logo en base64: función compartida con el pull
+            // legacy para que no vuelvan a divergir.
+            const profile = mergeProfileConfig(profileRows[0] || null);
             if (profile) payload.profile = profile;
         }
 

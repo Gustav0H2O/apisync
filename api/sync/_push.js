@@ -7,6 +7,7 @@ import {
 } from './_tables.js';
 import { ensureMirrorTables, getTableColumns } from './_ensure.js';
 import { resolveSpec, physicalColumns, writableColumns } from './_registry.js';
+import { buildProfileUpdate } from './_profile.js';
 import { sendToLicense } from '../_fcm.js';
 
 // undefined -> NULL antes de enviar a Turso (libsql no acepta undefined).
@@ -447,78 +448,19 @@ async function buildProfileStatements(connection, email, profile, statements) {
     }
 
     // ── Perfil: construcción DINÁMICA del UPDATE ─────────────────────────────
-    // Antes este bloque listaba ~40 columnas escritas a mano: agregar una
-    // preferencia nueva obligaba a editar la API y desplegar. Ahora se arma con
-    // las columnas que existen físicamente en `clientes` y que el cliente
-    // envió, y todo lo demás (incluido `config_data`) se resuelve por
-    // introspección.
-    const profileCols = await physicalColumns(connection, 'clientes');
-    const hasConfigDataCol = profileCols.has('config_data');
-
-    // Campos que nunca se copian del payload: los controla el servidor.
-    const RESERVED = new Set([
-        'id', 'email', 'version', 'created_at', 'updated_at', 'config_data',
-        'profile_change_count', 'profile_change_limit', 'clear_catalog_logo',
-    ]);
-
-    const setClauses = [];
-    const profileArgs = [];
-    for (const [key, value] of Object.entries(profile)) {
-        if (RESERVED.has(key)) continue;
-        if (!profileCols.has(key)) continue; // la columna no existe: se ignora
-        setClauses.push(`${key} = ?`);
-        profileArgs.push(value);
-    }
-
-    // El logo es un caso especial: si el cliente lo marcó para borrar, se
-    // anula; si no, se conserva el que hay (nunca se pisa con un vacío).
-    const clearLogo = profile.clear_catalog_logo === true;
-    if (profileCols.has('catalog_logo_path')) {
-        if (clearLogo) {
-            setClauses.push('catalog_logo_path = NULL');
-        } else {
-            setClauses.push('catalog_logo_path = catalog_logo_path');
-        }
-    }
-
-    // La versión del perfil la lleva el servidor (control de concurrencia:
-    // solo `version < incoming` llega aquí). Sin escribirla, un push con una
-    // versión menor sobrescribiría datos más nuevos.
-    setClauses.push('version = ?');
-    profileArgs.push(incomingVersion);
-
-    // Contador de cambios de identidad: lo lleva el servidor.
-    if (profileCols.has('profile_change_count')) {
-        setClauses.push('profile_change_count = ?');
-        profileArgs.push(identityChanged ? count + 1 : count);
-    }
-    if (profileCols.has('products_by_stock') && profile.products_by_stock === undefined) {
-        setClauses.push('products_by_stock = products_by_stock');
-    }
-
-    let updateSql = `UPDATE clientes SET ${setClauses.join(', ')}`;
-    const argsList = profileArgs;
-
-    // Todo lo no identitario también se empaqueta en el JSON para que la
-    // nube hable un solo idioma con los clientes (las columnas son caché).
-    if (hasConfigDataCol) {
-        const configDataObj = {};
-        for (const [k, v] of Object.entries(profile)) {
-            if (!['business_name', 'slogan', 'rif', 'address', 'user_name', 'user_phone', 'version', 'email'].includes(k)) {
-                configDataObj[k] = v;
-            }
-        }
-        updateSql += `, config_data = json_patch(COALESCE(config_data, '{}'), ?)`;
-        argsList.push(JSON.stringify(configDataObj));
-    }
-
-    updateSql += `, updated_at = CURRENT_TIMESTAMP WHERE email = ? AND version < ?`;
-    argsList.push(email, incomingVersion);
-
-    statements.push({
-        sql: updateSql,
-        args: mapP(argsList),
+    // La lógica vive en `_profile.js`, COMPARTIDA con el push legacy. Estaba
+    // duplicada y con ~40 columnas escritas a mano; esa duplicación es la que
+    // rompió la edición de roles al limpiar `clientes`: la copia legacy siguió
+    // pidiendo columnas inexistentes y tumbó el push atómico completo.
+    const profileUpdate = await buildProfileUpdate({
+        connection,
+        email,
+        profile,
+        incomingVersion,
+        profileChangeCount: identityChanged ? count + 1 : count,
+        versionOp: '<',
     });
+    if (profileUpdate) statements.push(profileUpdate);
     statements.push(...changeLogStatements(email, 'profile', email, 'upsert'));
     return 'applied';
 }

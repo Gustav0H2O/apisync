@@ -2,6 +2,7 @@ import { getConnection } from './_db.js';
 import { verifyToken, isDeviceRevoked, applyCors, parseExpirationDate } from './_helpers.js';
 import { changeLogStatements, ensureCursorStatement, TABLE_SPECS, normalizeRole } from './sync/_tables.js';
 import { resolveSpec } from './sync/_registry.js';
+import { buildProfileUpdate } from './sync/_profile.js';
 import { sendToLicense } from './_fcm.js';
 
 /**
@@ -152,50 +153,25 @@ export default async function handler(req, res) {
                 throw new Error("Límite de cambios de perfil alcanzado. Sincronización rechazada.");
             }
 
-            batchStatements.push({
-                sql: `UPDATE clientes SET 
-                    business_name = ?, slogan = ?, rif = ?, address = ?, user_name = ?,
-                    user_phone = ?, accent_color = ?, header_color = ?, version = ?,
-                    exchange_rate_mode = ?, working_currency = ?, display_currency = ?, print_currency = ?,
-                    manual_rate = ?, use_latest_rate = ?, usd_rate_latest = ?, usd_rate_previous = ?,
-                    show_banner_invoice = ?, show_banner_quote = ?, show_banner_delivery = ?,
-                    banner_color = ?, show_exchange_rate = ?, config_style = ?,
-                    products_by_stock = ?, 
-                    catalog_document_title = ?, catalog_layout_style = ?, 
-                    catalog_logo_path = CASE 
-                        WHEN ? = 1 THEN NULL 
-                        WHEN ? IS NOT NULL THEN ? 
-                        ELSE catalog_logo_path 
-                    END,
-                    catalog_logo_position = ?, catalog_banner_color = ?, catalog_header_color = ?,
-                    catalog_show_stock = ?, catalog_show_price_bs = ?, catalog_show_price_usd = ?,
-                    catalog_show_iva = ?, catalog_show_address = ?, catalog_show_phone = ?,
-                    catalog_show_slogan = ?, catalog_show_exchange_rate = ?, catalog_show_product_code = ?,
-                    catalog_show_product_description = ?, catalog_show_promos = ?, catalog_show_wholesale = ?,
-                    catalog_footer_text = ?, catalog_grayscale_mode = ?,
-                    profile_change_count = ?,
-                    updated_at = CURRENT_TIMESTAMP
-                  WHERE email = ? AND version <= ?`,
-                args: mapP([
-                    profile.business_name, profile.slogan, profile.rif, profile.address, profile.user_name,
-                    profile.user_phone, profile.accent_color, profile.header_color, profile.version,
-                    profile.exchange_rate_mode, profile.working_currency, profile.display_currency, profile.print_currency,
-                    profile.manual_rate, profile.use_latest_rate, profile.usd_rate_latest, profile.usd_rate_previous,
-                    profile.show_banner_invoice, profile.show_banner_quote, profile.show_banner_delivery,
-                    profile.banner_color, profile.show_exchange_rate, profile.config_style,
-                    (profile.products_by_stock !== undefined) ? profile.products_by_stock : 1,
-                    profile.catalog_document_title, profile.catalog_layout_style,
-                    profile.clear_catalog_logo ? 1 : 0, catalogLogoBuffer, catalogLogoBuffer,
-                    profile.catalog_logo_position, profile.catalog_banner_color, profile.catalog_header_color,
-                    profile.catalog_show_stock, profile.catalog_show_price_bs, profile.catalog_show_price_usd,
-                    profile.catalog_show_iva, profile.catalog_show_address, profile.catalog_show_phone,
-                    profile.catalog_show_slogan, profile.catalog_show_exchange_rate, profile.catalog_show_product_code,
-                    profile.catalog_show_product_description, profile.catalog_show_promos, profile.catalog_show_wholesale,
-                    profile.catalog_footer_text, profile.catalog_grayscale_mode,
-                    isProfileChange ? currentCount + 1 : currentCount,
-                    user.email, profile.version
-                ])
+            // El UPDATE del perfil se construye en `_profile.js` (fuente ÚNICA
+            // compartida con el push v47). Antes vivía duplicado y con ~40
+            // columnas escritas a mano; al limpiar `clientes` la copia legacy
+            // siguió pidiendo columnas inexistentes y tumbó el push entero
+            // —con los roles dentro—, que es como se rompió la edición de
+            // roles. Una sola implementación no puede volver a divergir.
+            const profileUpdate = await buildProfileUpdate({
+                connection,
+                email: user.email,
+                profile: {
+                    ...profile,
+                    // El legacy sube el logo como buffer en el multipart.
+                    catalog_logo_path: catalogLogoBuffer || profile.catalog_logo_path,
+                },
+                incomingVersion: Number(profile.version || 1),
+                profileChangeCount: isProfileChange ? currentCount + 1 : currentCount,
+                versionOp: '<=',
             });
+            if (profileUpdate) batchStatements.push(profileUpdate);
             // Solo se registra en el feed cuando la versión avanza de verdad
             // (el cliente legacy envía el perfil en CADA ciclo).
             const currentVersion = rows.length ? Number(rows[0].version || 1) : 0;
@@ -599,28 +575,18 @@ export default async function handler(req, res) {
         }
 
         // PULL PROFILE
+        // `SELECT *` en vez de la lista de columnas: al limpiar `clientes` esta
+        // consulta pedía columnas inexistentes y rompía la lectura completa.
+        // Además se mezcla `config_data` para que el cliente reciba toda la
+        // configuración en un solo objeto (las columnas son solo identidad y
+        // protocolo).
         const [profileRows] = await connection.execute(
-            `SELECT business_name, slogan, rif, address, user_name, email, user_phone, accent_color, header_color,
-                    exchange_rate_mode, working_currency, display_currency, print_currency,
-                    manual_rate, use_latest_rate, usd_rate_latest, usd_rate_previous,
-                    show_banner_invoice, show_banner_quote, show_banner_delivery,
-                    banner_color, show_exchange_rate, config_style, products_by_stock,
-                    catalog_document_title, catalog_layout_style, catalog_logo_path,
-                    catalog_logo_position, catalog_banner_color, catalog_header_color,
-                    catalog_show_stock, catalog_show_price_bs, catalog_show_price_usd,
-                    catalog_show_iva, catalog_show_address, catalog_show_phone,
-                    catalog_show_slogan, catalog_show_exchange_rate, catalog_show_product_code,
-                    catalog_show_product_description, catalog_show_promos, catalog_show_wholesale,
-                    catalog_footer_text, catalog_grayscale_mode,
-                    COALESCE(profile_change_limit, 3) as profile_change_limit,
-                    COALESCE(profile_change_count, 0) as profile_change_count,
-                    version, updated_at 
+            `SELECT *, COALESCE(profile_change_limit, 3) AS profile_change_limit,
+                    COALESCE(profile_change_count, 0) AS profile_change_count
              FROM clientes WHERE email = ? LIMIT 1`,
             [user.email]
         );
-
-        // Procesar el perfil para convertir el logo Blob a Base64 para la transmisión de vuelta
-        const profileResponse = profileRows[0] || null;
+        const profileResponse = mergeProfileConfig(profileRows[0] || null);
         if (profileResponse && profileResponse.catalog_logo_path) {
             const logo = profileResponse.catalog_logo_path;
             if (logo instanceof Buffer) {
