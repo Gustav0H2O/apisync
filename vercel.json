@@ -6,11 +6,5 @@
     { "source": "/api/auth/token", "destination": "/api/auth/token.js?action=token" },
     { "source": "/api/sync/:action", "destination": "/api/sync_router.js?action=:action" },
     { "source": "/api/sync", "destination": "/api/sync.js" }
-  ],
-  "crons": [
-    {
-      "path": "/api/cron-bcv",
-      "schedule": "0 10 * * *"
-    }
   ]
 }
