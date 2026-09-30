@@ -14,4 +14,6 @@ _invlocal.mjs
 # Migracion de cuenta del 2026-09-30 (herramienta de una sola vez + respaldo)
 migrate.mjs
 limpiar.mjs
+limpiar2.mjs
 migrar_backup.json
+limpiar_backup.json
