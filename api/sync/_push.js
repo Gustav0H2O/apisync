@@ -7,7 +7,7 @@ import {
 } from './_tables.js';
 import { ensureMirrorTables, getTableColumns } from './_ensure.js';
 import { resolveSpec, physicalColumns, writableColumns } from './_registry.js';
-import { buildProfileUpdate } from './_profile.js';
+import { buildProfileUpdate, mergeProfileConfig } from './_profile.js';
 import { sendToLicense } from '../_fcm.js';
 
 // undefined -> NULL antes de enviar a Turso (libsql no acepta undefined).
@@ -329,7 +329,9 @@ export default async function handler(req, res) {
         // Tiempo real: si algo cambió, despertar a los OTROS dispositivos de la
         // cuenta con un push SILENCIOSO (solo-datos) para que sincronicen aunque
         // estén cerrados. Best-effort: nunca rompe la respuesta del push.
-        if (applied.length > 0 || (profileResult === 'applied')) {
+        if (applied.length > 0 ||
+            profileResult === 'applied' ||
+            profileResult === 'change_limit') {
             try {
                 await sendToLicense(connection, user.licenseKey, {
                     excludeDeviceId: user.deviceId,
@@ -344,7 +346,27 @@ export default async function handler(req, res) {
             seq: Number(seqRows[0]?.seq || 0),
             applied, conflicts, rejected, aliases,
         };
-        if (profileResult) response.profile_status = profileResult;
+        if (profileResult) {
+            response.profile_status = profileResult;
+            // Identidad rechazada por el límite: la caja debe volver al perfil
+            // autoritativo de la nube. Su versión local ya quedó alineada con
+            // la del servidor, así que ni el pull (misma versión) ni el push
+            // siguiente (unchanged) volverían a reconciliarla.
+            if (profileResult === 'change_limit') {
+                try {
+                    const [pr] = await connection.execute(
+                        `SELECT *, COALESCE(profile_change_limit, 3) AS profile_change_limit,
+                                COALESCE(profile_change_count, 0) AS profile_change_count
+                         FROM clientes WHERE email = ? LIMIT 1`,
+                        [user.email]
+                    );
+                    const authProfile = mergeProfileConfig(pr[0] || null);
+                    if (authProfile) response.profile = authProfile;
+                } catch (e) {
+                    console.warn('[Push v47] No se pudo leer el perfil autoritativo:', e.message);
+                }
+            }
+        }
         return res.status(200).json(response);
     } catch (e) {
         console.error('❌ [Push v47 Error]:', e.message);
@@ -441,11 +463,12 @@ async function buildProfileStatements(connection, email, profile, statements) {
 
     const count = toNumber(current.profile_change_count, 0);
     const limit = toNumber(current.profile_change_limit, 3);
-    if (identityChanged && count >= limit) {
-        // A diferencia del legacy, NO aborta el push completo: los datos
-        // operativos se sincronizan y solo el perfil queda rechazado.
-        return 'change_limit';
-    }
+    // El límite protege SOLO la identidad del negocio (nombre, eslogan, RIF,
+    // dirección y datos de la persona). El resto de la configuración es
+    // operativa y se sincroniza SIEMPRE: antes, un perfil en su límite
+    // rechazaba el perfil completo y congelaba monedas, colores, catálogo,
+    // tasas e impresión para todas las cajas, en silencio.
+    const identityBlocked = identityChanged && count >= limit;
 
     // ── Perfil: construcción DINÁMICA del UPDATE ─────────────────────────────
     // La lógica vive en `_profile.js`, COMPARTIDA con el push legacy. Estaba
@@ -457,10 +480,13 @@ async function buildProfileStatements(connection, email, profile, statements) {
         email,
         profile,
         incomingVersion,
-        profileChangeCount: identityChanged ? count + 1 : count,
+        profileChangeCount: identityBlocked ? count : (identityChanged ? count + 1 : count),
         versionOp: '<',
+        skipIdentity: identityBlocked,
     });
     if (profileUpdate) statements.push(profileUpdate);
+    // Se registra en el feed SIEMPRE que algo se escribió: con la identidad
+    // bloqueada la configuración igual cambió y las otras cajas deben verla.
     statements.push(...changeLogStatements(email, 'profile', email, 'upsert'));
-    return 'applied';
+    return identityBlocked ? 'change_limit' : 'applied';
 }

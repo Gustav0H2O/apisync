@@ -74,6 +74,12 @@ export async function buildProfileUpdate({
     // El legacy reenvía el perfil en cada ciclo con la misma versión, así que
     // usa '<=' (hay que reescribir). El v47 solo avanza versión: '<'.
     versionOp = '<',
+    // Límite de cambios de identidad agotado: se conservan las columnas de
+    // identidad que ya tiene la nube y se guarda igual TODO lo demás (monedas,
+    // colores, catálogo, tasas, impresión, contadores). Antes el límite
+    // rechazaba el perfil COMPLETO, así que la configuración tampoco llegaba a
+    // las demás cajas — ni a la propia.
+    skipIdentity = false,
 }) {
     const cols = await physicalColumns(connection, 'clientes');
     if (!cols.size) return null;
@@ -93,6 +99,7 @@ export async function buildProfileUpdate({
     // 1) Columnas físicas que el cliente envió.
     for (const [key, value] of Object.entries(profile)) {
         if (RESERVED.has(key)) continue;
+        if (skipIdentity && IDENTIDAD.includes(key)) continue; // límite agotado
         if (!cols.has(key)) continue; // la columna ya no existe: se ignora
         set.push(`${key} = ?`);
         args.push(value === undefined ? null : value);

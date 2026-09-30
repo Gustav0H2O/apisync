@@ -106,6 +106,10 @@ export default async function handler(req, res) {
         const mapP = (arr) => arr.map(v => v === undefined ? null : v);
 
         const batchStatements = [];
+        // 'change_limit' cuando la identidad se rechazó por el límite: la
+        // configuración sí se guardó, así que la caja debe alinear su identidad
+        // local con el perfil autoritativo que devuelve el pull.
+        let profileStatus = null;
         // Change-feed v47: cada escritura del flujo legacy también registra su
         // entrada en change_log para que los dispositivos v47 la vean en
         // tiempo real (transición v46/v47 — INFORME_API_SYNC.md §2.4).
@@ -163,12 +167,16 @@ export default async function handler(req, res) {
             if (!versionAdvances) {
                 // Perfil idéntico al del servidor: no se toca nada, así el
                 // contador refleja solo ediciones REALES.
-            } else if (isProfileChange && currentCount >= currentLimit) {
-                // Límite alcanzado: se rechaza SOLO el perfil y el push sigue
-                // con los datos operativos. Antes se hacía `throw` y tumbaba el
-                // batch entero, con los roles dentro.
-                logChange('profile_limit', user.email, null);
             } else {
+                // Límite agotado: se rechaza SOLO la identidad (se conservan en
+                // la nube el nombre, eslogan, RIF, dirección y datos de la
+                // persona), pero el resto de la configuración —monedas, colores,
+                // catálogo, tasas, impresión— SÍ se guarda y se propaga.
+                // Antes se hacía `throw` (tumbaba el push ENTERO, con los roles
+                // dentro) y después se saltaba el perfil completo, con lo que la
+                // configuración tampoco llegaba a las demás cajas.
+                const identityBlocked = isProfileChange && currentCount >= currentLimit;
+
                 // El UPDATE del perfil se construye en `_profile.js` (fuente ÚNICA
                 // compartida con el push v47). Antes vivía duplicado y con ~40
                 // columnas escritas a mano; al limpiar `clientes` la copia legacy
@@ -184,13 +192,16 @@ export default async function handler(req, res) {
                         catalog_logo_path: catalogLogoBuffer || profile.catalog_logo_path,
                     },
                     incomingVersion,
-                    profileChangeCount: isProfileChange ? currentCount + 1 : currentCount,
+                    profileChangeCount: identityBlocked ? currentCount
+                        : (isProfileChange ? currentCount + 1 : currentCount),
                     // Estricto: una versión igual o anterior NUNCA pisa el perfil
                     // que ya tiene el servidor (last-write-wins por versión).
                     versionOp: '<',
+                    skipIdentity: identityBlocked,
                 });
                 if (profileUpdate) batchStatements.push(profileUpdate);
                 logChange('profile', user.email, null);
+                if (identityBlocked) profileStatus = 'change_limit';
             }
         }
 
@@ -654,6 +665,7 @@ export default async function handler(req, res) {
             fiscal_transmissions: simplePulls.fiscal_transmissions,
             user_roles: simplePulls.user_roles,
             profile: profileResponse,
+            profile_status: profileStatus,
             notifications: notifications,
             checksum: globalChecksum
         });
