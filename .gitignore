@@ -1,9 +1,9 @@
-node_modules
-.env
-*.db
-*.patch
-.vercel
-.env*.local
-firebase-service-account.json
-*firebase*.json
-*-adminsdk-*.json
+﻿# Herramientas locales de mantenimiento (no son parte del runtime)
+q.mjs
+qfile.mjs
+test_registry.mjs
+_fixreg.mjs
+migrate_clientes_v3.mjs
+# Respaldos de la base de produccion: NUNCA en git
+backup_clientes_pre_v3.json
+_seed.sql
