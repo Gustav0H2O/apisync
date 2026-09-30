@@ -2,7 +2,7 @@ import { getConnection } from './_db.js';
 import { verifyToken, isDeviceRevoked, applyCors, parseExpirationDate } from './_helpers.js';
 import { changeLogStatements, ensureCursorStatement, TABLE_SPECS, normalizeRole } from './sync/_tables.js';
 import { resolveSpec } from './sync/_registry.js';
-import { buildProfileUpdate } from './sync/_profile.js';
+import { buildProfileUpdate, mergeProfileConfig } from './sync/_profile.js';
 import { sendToLicense } from './_fcm.js';
 
 /**
