@@ -174,6 +174,18 @@ export function toNumber(value, fallback = 0) {
     return Number.isFinite(n) ? n : fallback;
 }
 
+/// Normaliza un rol al vocabulario canónico de la app + alias legacy.
+/// Un rol desconocido JAMÁS debe tumbar la sincronización completa (el batch
+/// es atómico): se degrada a 'operador', consistente con el parse del cliente.
+export function normalizeRole(raw) {
+    const r = String(raw ?? '').trim().toLowerCase();
+    if (r === 'admin' || r === 'administrador') return 'admin';
+    if (r === 'supervisor') return 'supervisor';
+    if (r === 'operador' || r === 'cajero') return 'operador';
+    if (r === 'auditor_seniat' || r === 'auditorseniat' || r === 'auditor') return 'auditor_seniat';
+    return 'operador';
+}
+
 /// Sentencias del patrón change-feed: bump del cursor + entrada en change_log,
 /// SIEMPRE dentro del mismo batch atómico que la escritura que registran.
 // v49: identidad canónica = account_key (license_key); account_email se

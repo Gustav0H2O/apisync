@@ -1,6 +1,6 @@
 import { getConnection } from './_db.js';
 import { verifyToken, isDeviceRevoked, applyCors, parseExpirationDate } from './_helpers.js';
-import { changeLogStatements, ensureCursorStatement, TABLE_SPECS } from './sync/_tables.js';
+import { changeLogStatements, ensureCursorStatement, TABLE_SPECS, normalizeRole } from './sync/_tables.js';
 import { sendToLicense } from './_fcm.js';
 
 /**
@@ -359,12 +359,16 @@ export default async function handler(req, res) {
                 const allCols = ['uuid', 'account_email', ...spec.cols, 'deleted_at', 'version', 'updated_at'];
                 const updatable = [...spec.cols, 'deleted_at', 'updated_at', 'version'];
                 const conflictTarget = spec.conflictTarget || '(uuid)';
+                // v49r3: normalizar roles (supervisor/alias) para no violar el
+                // CHECK de user_roles y tumbar el batch atómico completo.
+                const colVals = spec.cols.map(c =>
+                    (tableName === 'user_roles' && c === 'role') ? normalizeRole(item[c]) : item[c]);
                 batchStatements.push({
                     sql: `INSERT INTO ${spec.remote} (${allCols.join(', ')})
                           VALUES (${allCols.map(() => '?').join(', ')})
                           ON CONFLICT ${conflictTarget} DO UPDATE SET
                           ${updatable.map(c => `${c} = CASE WHEN excluded.version >= ${spec.remote}.version THEN excluded.${c} ELSE ${spec.remote}.${c} END`).join(',\n                          ')}`,
-                    args: mapP([item.uuid, user.email, ...spec.cols.map(c => item[c]), item.deleted_at, item.version, item.updated_at]),
+                    args: mapP([item.uuid, user.email, ...colVals, item.deleted_at, item.version, item.updated_at]),
                 });
                 logChange(tableName, item.uuid, item.deleted_at);
             }

@@ -1,7 +1,7 @@
 import { getConnection } from '../_db.js';
 import { verifyToken, isDeviceRevoked, requireJwtSecret, applyCors } from '../_helpers.js';
 import {
-    TABLE_SPECS, TABLE_ORDER, toNumber,
+    TABLE_SPECS, TABLE_ORDER, toNumber, normalizeRole,
     changeLogStatements, ensureCursorStatement,
     resolveTableOrder, CORE_TABLE_RULES,
 } from './_tables.js';
@@ -141,6 +141,11 @@ export default async function handler(req, res) {
             for (const row of rows) {
                 const uuid = String(row.uuid || '');
                 if (!uuid) continue;
+                // v49r3: normalizar roles para no violar el CHECK de user_roles
+                // y tumbar el batch atómico completo (p. ej. 'supervisor').
+                if (table === 'user_roles' && row.role !== undefined) {
+                    row.role = normalizeRole(row.role);
+                }
                 const existing = existingByUuid.get(uuid) || null;
 
                 // Alcance de cuenta v49: canónico account_key, fallback email (clientes viejos).
