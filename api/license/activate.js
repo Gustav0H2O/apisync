@@ -85,12 +85,35 @@ export default async function handler(req, res) {
         }
 
         let accountEmail = isPlaceholder ? normalizedEmail : clientEmail;
+        let effectiveClienteId = Number(lic.cliente_id);
 
         if (isPlaceholder && normalizedEmail && !normalizedEmail.startsWith('placeholder-')) {
-            await connection.execute(
-                `UPDATE clientes SET email = ? WHERE id = ?`,
+            // Renovación con clave nueva y correo que YA tiene cliente:
+            // `clientes.email` es UNIQUE, así que un UPDATE directo revienta
+            // con 500 y la renovación queda sin efecto. Se hace MERGE: la
+            // licencia se re-apunta al cliente real y el placeholder vacío se
+            // elimina (guardado: nunca borrar un cliente que aún tenga licencias).
+            const [dupRows] = await connection.execute(
+                `SELECT id FROM clientes WHERE LOWER(TRIM(email)) = ? AND id != ? LIMIT 1`,
                 [normalizedEmail, lic.cliente_id]
             );
+            if (dupRows.length) {
+                effectiveClienteId = Number(dupRows[0].id);
+                await connection.execute(
+                    `UPDATE licencias SET cliente_id = ? WHERE id = ?`,
+                    [effectiveClienteId, lic.lic_id]
+                );
+                await connection.execute(
+                    `DELETE FROM clientes WHERE id = ? AND NOT EXISTS (
+                       SELECT 1 FROM licencias WHERE cliente_id = ? AND id != ?)`,
+                    [lic.cliente_id, lic.cliente_id, lic.cliente_id]
+                );
+            } else {
+                await connection.execute(
+                    `UPDATE clientes SET email = ? WHERE id = ?`,
+                    [normalizedEmail, lic.cliente_id]
+                );
+            }
             accountEmail = normalizedEmail;
         }
 
@@ -114,20 +137,23 @@ export default async function handler(req, res) {
         // migrarlos atómicamente a la nueva clave para sincronización inmediata.
         // v49: a prueba de colisiones de PK compuesta (license_key, device_id):
         // primero se eliminan las filas destino que colisionarían.
+        // Nota: usa effectiveClienteId — tras el merge de renovación, la clave
+        // vieja y la nueva comparten cliente (antes cada placeholder tenía el
+        // suyo y la migración no encontraba nada).
         try {
             await connection.execute(
                 `DELETE FROM devices WHERE license_key = ? AND device_id IN (
                      SELECT device_id FROM devices WHERE revoked = 0 AND license_key IN (
                        SELECT license_key FROM licencias WHERE cliente_id = ? AND license_key != ?
                      ))`,
-                [license_key, lic.cliente_id, license_key]
+                [license_key, effectiveClienteId, license_key]
             );
             await connection.execute(
                 `UPDATE devices SET license_key = ?, revoked = 0, revoked_at = NULL, last_seen = datetime('now')
                  WHERE revoked = 0 AND license_key IN (
-                     SELECT license_key FROM licencias WHERE cliente_id = ? AND license_key != ?
+                   SELECT license_key FROM licencias WHERE cliente_id = ? AND license_key != ?
                  )`,
-                [license_key, lic.cliente_id, license_key]
+                [license_key, effectiveClienteId, license_key]
             );
         } catch (_) {}
 
