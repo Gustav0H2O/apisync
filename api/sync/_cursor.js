@@ -24,6 +24,18 @@ export default async function handler(req, res) {
     // pantalla de "Acceso Restringido". Mismo protocolo que /sync/changes,
     // /sync/push, /license/status y el resto de endpoints autenticados.
     if (await isDeviceRevoked(user)) {
+        // Marca de contacto: la caja revocada SÍ sigue llamando al latido, pero
+        // el 401 se devuelve antes de tocar `devices`, así que no había forma
+        // de distinguir "no le llegó la orden" de "no la consultó". Actualizar
+        // `last_seen` en la fila ya revocada no altera ninguna decisión de
+        // seguridad y hace el diagnóstico verificable desde la base de datos.
+        try {
+            await getConnection().execute(
+                `UPDATE devices SET last_seen = datetime('now')
+                 WHERE license_key = ? AND device_id = ?`,
+                [String(user.licenseKey || '').trim().toUpperCase(), user.deviceId]
+            );
+        } catch (_) { /* diagnóstico best-effort */ }
         return res.status(401).json({ error: 'DEVICE_REVOKED' });
     }
 

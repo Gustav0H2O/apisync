@@ -109,6 +109,17 @@ export default async function handler(req, res) {
         let status = 'active';
         if (await isDeviceRevoked({ deviceId: user.deviceId, licenseKey: effectiveLicenseKey })) {
             status = 'revoked';
+            // Marca de contacto (diagnóstico): el poll de licencia corre cada
+            // 10 s en todas las cajas, incluso sin sincronización. Tocar
+            // `last_seen` en la fila ya revocada no cambia ninguna decisión de
+            // seguridad y permite ver desde la BD que la caja revocada sí
+            // está consultando y recibe el "revoked".
+            try {
+                await connection.execute(
+                    `UPDATE devices SET last_seen = datetime('now') WHERE license_key = ? AND device_id = ?`,
+                    [effectiveLicenseKey, user.deviceId]
+                );
+            } catch (_) { /* best-effort */ }
         }
 
         const expDate = parseExpirationDate(lic.fecha_vencimiento);
