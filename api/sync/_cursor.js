@@ -1,5 +1,5 @@
 import { getConnection } from '../_db.js';
-import { verifyToken, requireJwtSecret, applyCors } from '../_helpers.js';
+import { verifyToken, isDeviceRevoked, requireJwtSecret, applyCors } from '../_helpers.js';
 
 /**
  * GET /api/sync/cursor?since=<seq>&wait=<sec>  (auth JWT)
@@ -19,6 +19,13 @@ export default async function handler(req, res) {
 
     const user = verifyToken(req);
     if (!user) return res.status(401).json({ error: 'No autorizado' });
+    // Corazón del tiempo real (~4 s): sin este chequeo un dispositivo
+    // revocado con JWT aún válido seguía recibiendo 200 y jamás veía la
+    // pantalla de "Acceso Restringido". Mismo protocolo que /sync/changes,
+    // /sync/push, /license/status y el resto de endpoints autenticados.
+    if (await isDeviceRevoked(user)) {
+        return res.status(401).json({ error: 'DEVICE_REVOKED' });
+    }
 
     const since = req.query.since !== undefined ? Number(req.query.since) : null;
     const waitSeconds = Math.min(20, Math.max(0, Number(req.query.wait || 0)));
