@@ -275,6 +275,42 @@ async function handleUnlink(req, res) {
         // v49: revoked_at canónico (antes solo last_seen, que se reescribía con
         // heartbeats y rompía el cálculo del cooldown).
         await queryDB(`UPDATE devices SET revoked = 1, revoked_at = CURRENT_TIMESTAMP, last_seen = CURRENT_TIMESTAMP WHERE license_key = ? AND device_id = ?`, [effectiveLicense, rowToUnlink.device_id]);
+
+        // El estado del TERMINAL también se desvincula.
+        //
+        // `user_roles` guarda el rol y la configuración por caja con el email
+        // `device:<id>` (y `device_cfg:<id>:<prefijo>:<nombre>`). Sin borrarlo,
+        // al volver a vincular la caja la nube le devolvía el rol, el nombre y
+        // el prefijo que tenía ANTES de desvincularla, y quedaba operando con
+        // permisos que el administrador ya le había quitado.
+        //
+        // Se limita a ESTA cuenta: el mismo equipo puede aparecer en filas de
+        // otra cuenta (cambio de correo) y esas no se deben tocar aquí.
+        const unlinkedId = rowToUnlink.device_id;
+        const roleRows = await queryDB(
+            `SELECT uuid FROM user_roles
+              WHERE (email = ? OR email LIKE ?)
+                AND (account_key = ? OR (account_key IS NULL AND account_email = ?))`,
+            [`device:${unlinkedId}`, `device_cfg:${unlinkedId}:%`, effectiveLicense, user.email]
+        );
+        for (const r of roleRows) {
+            await queryDB(
+                `UPDATE user_roles
+                    SET deleted_at = CURRENT_TIMESTAMP,
+                        updated_at = CURRENT_TIMESTAMP,
+                        version = COALESCE(version, 0) + 1
+                  WHERE uuid = ?`,
+                [r.uuid]
+            );
+            // Mismo formato que el push del cliente: el feed reparte la baja
+            // igual que cualquier otro cambio.
+            await queryDB(
+                `INSERT INTO change_log (account_email, account_key, seq, table_name, row_uuid, op)
+                 SELECT ?, ?, COALESCE((SELECT MAX(seq) FROM change_log WHERE account_email = ?), 0) + 1,
+                        'user_roles', ?, 'delete'`,
+                [user.email, effectiveLicense, user.email, r.uuid]
+            );
+        }
         
         const policy = await getLicensePolicy(effectiveLicense);
         const [cooldown] = await queryDB(`SELECT datetime('now', '+' || ? || ' hours') AS cooldown_until`, [policy.pairCooldownDays * 24]);
