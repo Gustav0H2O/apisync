@@ -1,5 +1,5 @@
 import { getConnection } from '../_db.js';
-import { verifyToken, requireJwtSecret, applyCors } from '../_helpers.js';
+import { verifyToken, isDeviceRevoked, requireJwtSecret, applyCors } from '../_helpers.js';
 
 /**
  * GET /api/sync/cursor?since=<seq>&wait=<sec>  (auth JWT)
@@ -19,6 +19,25 @@ export default async function handler(req, res) {
 
     const user = verifyToken(req);
     if (!user) return res.status(401).json({ error: 'No autorizado' });
+    // Corazón del tiempo real (~4 s): sin este chequeo un dispositivo
+    // revocado con JWT aún válido seguía recibiendo 200 y jamás veía la
+    // pantalla de "Acceso Restringido". Mismo protocolo que /sync/changes,
+    // /sync/push, /license/status y el resto de endpoints autenticados.
+    if (await isDeviceRevoked(user)) {
+        // Marca de contacto: la caja revocada SÍ sigue llamando al latido, pero
+        // el 401 se devuelve antes de tocar `devices`, así que no había forma
+        // de distinguir "no le llegó la orden" de "no la consultó". Actualizar
+        // `last_seen` en la fila ya revocada no altera ninguna decisión de
+        // seguridad y hace el diagnóstico verificable desde la base de datos.
+        try {
+            await getConnection().execute(
+                `UPDATE devices SET last_seen = datetime('now')
+                 WHERE license_key = ? AND device_id = ?`,
+                [String(user.licenseKey || '').trim().toUpperCase(), user.deviceId]
+            );
+        } catch (_) { /* diagnóstico best-effort */ }
+        return res.status(401).json({ error: 'DEVICE_REVOKED' });
+    }
 
     const since = req.query.since !== undefined ? Number(req.query.since) : null;
     const waitSeconds = Math.min(20, Math.max(0, Number(req.query.wait || 0)));
@@ -29,14 +48,15 @@ export default async function handler(req, res) {
         const connection = getConnection();
 
         async function fetchCursorState() {
+            const accountKey = String(user.licenseKey || '').trim().toUpperCase() || null;
             const [rows] = await connection.execute(
                 `SELECT
-                    COALESCE((SELECT seq FROM account_cursor WHERE account_email = ?), 0) AS seq,
+                    COALESCE((SELECT seq FROM account_cursor WHERE account_key = ? OR (account_key IS NULL AND account_email = ?)), 0) AS seq,
                     COALESCE((SELECT MAX(id) FROM app_notifications
                               WHERE target_email IS NULL OR target_email = ?), 0) AS notif_seq,
                     (SELECT COUNT(*) FROM app_notifications
                       WHERE is_active = 1 AND (target_email IS NULL OR target_email = ?)) AS notif_active`,
-                [user.email, user.email, user.email]
+                [accountKey, user.email, user.email, user.email]
             );
 
             const row = rows[0] || {};

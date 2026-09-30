@@ -44,7 +44,7 @@ export function requireJwtSecret(res) {
     return true;
 }
 
-export function verifyToken(req) {
+export function verifyToken(req, options = {}) {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return null;
@@ -52,7 +52,7 @@ export function verifyToken(req) {
 
     const token = authHeader.split(' ')[1];
     try {
-        return jwt.verify(token, process.env.JWT_SECRET || JWT_SECRET);
+        return jwt.verify(token, process.env.JWT_SECRET || JWT_SECRET, options);
     } catch (err) {
         return null;
     }
@@ -75,10 +75,42 @@ export async function isDeviceRevoked(user) {
 
     try {
         const connection = getConnection();
-        const [rows] = await connection.execute(
-            `SELECT revoked, license_key FROM devices WHERE device_id = ? LIMIT 1`,
-            [user.deviceId]
-        );
+        // v49: PK compuesta (license_key, device_id). Buscar scoped por licencia
+        // para evitar colisión cross-cuenta; fallback legacy por device_id solo.
+        const licenseKey = user.licenseKey || user.effectiveKey || null;
+        let rows = [];
+        if (licenseKey) {
+            [rows] = await connection.execute(
+                `SELECT revoked, license_key, revoked_at FROM devices WHERE license_key = ? AND device_id = ? LIMIT 1`,
+                [licenseKey, user.deviceId]
+            );
+        }
+        if (!rows.length) {
+            // v49r2: fallback consciente de cuenta. El mismo device_id puede
+            // existir bajo varias licencias (rotaciones/renovaciones): una
+            // fila revocada VIEJA de otra licencia jamás debe marcar como
+            // revocado un equipo vivo. Orden: activas primero; entre ellas,
+            // las de la MISMA cuenta (mismo email) primero.
+            const email = String(user.email || '').trim().toLowerCase();
+            const [fb] = await connection.execute(
+                `SELECT d.revoked, d.license_key,
+                        CASE WHEN ? != '' AND LOWER(TRIM(COALESCE(c2.email, ''))) = ? THEN 1 ELSE 0 END AS same_account
+                 FROM devices d
+                 LEFT JOIN licencias l2 ON l2.license_key = d.license_key
+                 LEFT JOIN clientes c2 ON c2.id = l2.cliente_id
+                 WHERE d.device_id = ?
+                 ORDER BY d.revoked ASC, same_account DESC, d.last_seen DESC LIMIT 1`,
+                [email, email, user.deviceId]
+            );
+            rows = fb;
+            if (rows.length && Number(rows[0].revoked) === 0 && Number(rows[0].same_account) !== 1) {
+                // Fila activa pero de OTRA cuenta: fail-closed (no conceder),
+                // igual que el chequeo de licencia anterior.
+                console.error(`❌ [Revoked Check] Dispositivo ${user.deviceId} activo en otra cuenta.`);
+                revokedStatusCache.set(user.deviceId, { revoked: true, checkedAt: Date.now() });
+                return true;
+            }
+        }
 
         if (!rows.length) {
             console.warn(`⚠️ [Revoked Check] Dispositivo ${user.deviceId} no encontrado en DB.`);
@@ -88,8 +120,13 @@ export async function isDeviceRevoked(user) {
         const device = rows[0];
         const revoked = Number(device.revoked) === 1;
 
-        // Consistencia de licencia: token de una licencia distinta a la registrada
-        if (!revoked && user.licenseKey && device.license_key && device.license_key !== user.licenseKey) {
+        // Consistencia de licencia: token de una licencia distinta a la
+        // registrada, en OTRA cuenta, no concede (fail-closed). Una fila
+        // activa de la MISMA cuenta (rotación/renovación) sí vale: el
+        // fallback ya ordenó por (activas, misma cuenta) primero.
+        if (!revoked && user.licenseKey && device.license_key &&
+            device.license_key !== user.licenseKey &&
+            Number(device.same_account ?? 1) !== 1) {
             console.error(`❌ [Revoked Check] Conflicto de licencia para ${user.deviceId}.`);
             return true;
         }
@@ -104,6 +141,19 @@ export async function isDeviceRevoked(user) {
         }
         return true; // fail-closed
     }
+}
+
+/**
+ * Identidad canónica de cuenta v49: license_key (estable ante cambios de
+ * email o rotaciones). El email queda como display/fallback para clientes viejos.
+ */
+export function accountKeyOf(user) {
+    const k = String(user?.licenseKey || user?.effectiveKey || user?.license_key || '').trim().toUpperCase();
+    return k || null;
+}
+
+export function accountEmailOf(user) {
+    return String(user?.email || '').trim().toLowerCase() || null;
 }
 
 export async function queryDB(sql, params) {

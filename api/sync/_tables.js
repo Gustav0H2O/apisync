@@ -174,25 +174,45 @@ export function toNumber(value, fallback = 0) {
     return Number.isFinite(n) ? n : fallback;
 }
 
+/// Normaliza un rol al vocabulario canónico de la app + alias legacy.
+/// Un rol desconocido JAMÁS debe tumbar la sincronización completa (el batch
+/// es atómico): se degrada a 'operador', consistente con el parse del cliente.
+export function normalizeRole(raw) {
+    const r = String(raw ?? '').trim().toLowerCase();
+    if (r === 'admin' || r === 'administrador') return 'admin';
+    if (r === 'supervisor') return 'supervisor';
+    if (r === 'operador' || r === 'cajero') return 'operador';
+    if (r === 'auditor_seniat' || r === 'auditorseniat' || r === 'auditor') return 'auditor_seniat';
+    return 'operador';
+}
+
 /// Sentencias del patrón change-feed: bump del cursor + entrada en change_log,
 /// SIEMPRE dentro del mismo batch atómico que la escritura que registran.
-export function changeLogStatements(email, tableName, rowUuid, op) {
+// v49: identidad canónica = account_key (license_key); account_email se
+// conserva como fallback para clientes viejos.
+export function changeLogStatements(email, tableName, rowUuid, op, accountKey = null) {
+    const key = accountKey || null;
     return [
+        {
+            sql: `INSERT INTO account_cursor (account_email, account_key, seq) VALUES (?, ?, 0)
+                  ON CONFLICT(account_email) DO UPDATE SET account_key = COALESCE(excluded.account_key, account_cursor.account_key)`,
+            args: [email, key],
+        },
         {
             sql: 'UPDATE account_cursor SET seq = seq + 1 WHERE account_email = ?',
             args: [email],
         },
         {
-            sql: `INSERT INTO change_log (account_email, seq, table_name, row_uuid, op)
-                  VALUES (?, (SELECT seq FROM account_cursor WHERE account_email = ?), ?, ?, ?)`,
-            args: [email, email, tableName, rowUuid, op],
+            sql: `INSERT INTO change_log (account_email, account_key, seq, table_name, row_uuid, op)
+                  VALUES (?, ?, (SELECT seq FROM account_cursor WHERE account_email = ?), ?, ?, ?)`,
+            args: [email, key, email, tableName, rowUuid, op],
         },
     ];
 }
 
-export function ensureCursorStatement(email) {
+export function ensureCursorStatement(email, accountKey = null) {
     return {
-        sql: 'INSERT OR IGNORE INTO account_cursor (account_email, seq) VALUES (?, 0)',
-        args: [email],
+        sql: `INSERT OR IGNORE INTO account_cursor (account_email, account_key, seq) VALUES (?, ?, 0)`,
+        args: [email, accountKey],
     };
 }

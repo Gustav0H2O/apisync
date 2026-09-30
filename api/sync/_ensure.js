@@ -14,6 +14,7 @@ import { TABLE_SPECS } from './_tables.js';
 const COMMON_COLS = {
     uuid: 'TEXT PRIMARY KEY',
     account_email: 'TEXT',
+    account_key: 'TEXT',
     version: 'INTEGER DEFAULT 1',
     updated_at: 'TEXT',
     deleted_at: 'TEXT',
@@ -99,7 +100,8 @@ export const TABLE_SCHEMAS = {
         response_code: 'TEXT', retry_count: 'INTEGER',
         last_attempt_at: 'TEXT',
     },
-    user_roles: { email: 'TEXT', role: 'TEXT' },
+    user_roles: { email: 'TEXT', role: 'TEXT', account_key: 'TEXT' },
+    device_role_assignments: { account_key: 'TEXT', device_id: 'TEXT', role: 'TEXT', terminal_prefix: 'TEXT', terminal_name: 'TEXT' },
 };
 
 export function mirrorDdl(clientTable) {
@@ -136,14 +138,14 @@ export function mirrorDdl(clientTable) {
 
 export const INFRA_DDL = [
     `CREATE TABLE IF NOT EXISTS account_cursor (
-        account_email TEXT PRIMARY KEY, seq INTEGER DEFAULT 0
+        account_email TEXT PRIMARY KEY, account_key TEXT, seq INTEGER DEFAULT 0
     )`,
     `CREATE TABLE IF NOT EXISTS change_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT, account_email TEXT,
-        seq INTEGER, table_name TEXT, row_uuid TEXT, op TEXT
+        account_key TEXT, seq INTEGER, table_name TEXT, row_uuid TEXT, op TEXT
     )`,
     `CREATE INDEX IF NOT EXISTS idx_change_log_account_seq
-        ON change_log (account_email, seq)`,
+        ON change_log (account_key, account_email, seq)`,
     `CREATE TABLE IF NOT EXISTS app_notifications (
         id INTEGER PRIMARY KEY AUTOINCREMENT, target_email TEXT,
         condition_key TEXT, condition_op TEXT, condition_val TEXT,
@@ -256,6 +258,14 @@ export async function ensureMirrorTables(connection, clientTables, changes = nul
         try {
             await connection.execute(ddl, []);
             ensured.push(table);
+            // v49: garantizar account_key en espejos viejos (email-only).
+            try {
+                const spec = TABLE_SPECS[table];
+                const remote = spec?.remote || `sync_${table.toLowerCase().trim()}`;
+                if (spec?.accountScoped !== false) {
+                    await connection.execute(`ALTER TABLE ${remote} ADD COLUMN account_key TEXT`, []);
+                }
+            } catch (_) {}
             const sample = (changes && Array.isArray(changes[table]) && changes[table][0]) || null;
             await autoMigrateColumns(connection, table, sample);
 

@@ -67,19 +67,55 @@ export default async function handler(req, res) {
         const usado = Number(lic.usado) === 1;
         const maxDevices = Number(lic.max_devices) || DEFAULT_MAX_DEVICES;
 
-        if (!isPlaceholder && clientEmail !== normalizedEmail) {
-            return res.status(409).json({ error: 'already_used' });
-        }
-
-        const expDate = parseExpirationDate(lic.fecha_vencimiento);
-        if (tipo === 'saas' && expDate && expDate < new Date()) {
-            return res.status(403).json({
-                error: 'expired',
-                message: 'Esta licencia ya está vencida. Adquiere una nueva licencia o renueva tu suscripción.'
+        if (clientEmail && !isPlaceholder && clientEmail !== normalizedEmail) {
+            return res.status(409).json({
+                error: 'already_used',
+                message: 'Esta licencia ya fue activada con otro correo electrónico.'
             });
         }
 
+        const expDate = parseExpirationDate(lic.fecha_vencimiento);
+        if (tipo === 'saas') {
+            if (!expDate || expDate < new Date()) {
+                return res.status(403).json({
+                    error: 'expired',
+                    message: 'Esta licencia está vencida. Adquiere una nueva clave o renueva tu suscripción.'
+                });
+            }
+        }
+
         let accountEmail = isPlaceholder ? normalizedEmail : clientEmail;
+        let effectiveClienteId = Number(lic.cliente_id);
+
+        if (isPlaceholder && normalizedEmail && !normalizedEmail.startsWith('placeholder-')) {
+            // Renovación con clave nueva y correo que YA tiene cliente:
+            // `clientes.email` es UNIQUE, así que un UPDATE directo revienta
+            // con 500 y la renovación queda sin efecto. Se hace MERGE: la
+            // licencia se re-apunta al cliente real y el placeholder vacío se
+            // elimina (guardado: nunca borrar un cliente que aún tenga licencias).
+            const [dupRows] = await connection.execute(
+                `SELECT id FROM clientes WHERE LOWER(TRIM(email)) = ? AND id != ? LIMIT 1`,
+                [normalizedEmail, lic.cliente_id]
+            );
+            if (dupRows.length) {
+                effectiveClienteId = Number(dupRows[0].id);
+                await connection.execute(
+                    `UPDATE licencias SET cliente_id = ? WHERE id = ?`,
+                    [effectiveClienteId, lic.lic_id]
+                );
+                await connection.execute(
+                    `DELETE FROM clientes WHERE id = ? AND NOT EXISTS (
+                       SELECT 1 FROM licencias WHERE cliente_id = ? AND id != ?)`,
+                    [lic.cliente_id, lic.cliente_id, lic.cliente_id]
+                );
+            } else {
+                await connection.execute(
+                    `UPDATE clientes SET email = ? WHERE id = ?`,
+                    [normalizedEmail, lic.cliente_id]
+                );
+            }
+            accountEmail = normalizedEmail;
+        }
 
         if (!usado) {
             // Ganador atómico de la activación
@@ -89,23 +125,37 @@ export default async function handler(req, res) {
                 [license_key]
             );
             const won = Number(result.affectedRows || 0) === 1;
-            if (won) {
-                if (isPlaceholder) {
-                    await connection.execute(
-                        `UPDATE clientes SET email = ? WHERE id = ?`,
-                        [normalizedEmail, lic.cliente_id]
-                    );
-                }
-                if (tipo === 'saas') {
-                    await connection.execute(
-                        `UPDATE detalles_saas SET last_check = datetime('now') WHERE licencia_id = ?`,
-                        [lic.lic_id]
-                    );
-                }
+            if (won && tipo === 'saas') {
+                await connection.execute(
+                    `UPDATE detalles_saas SET last_check = datetime('now') WHERE licencia_id = ?`,
+                    [lic.lic_id]
+                );
             }
-            // Si no ganó, otro dispositivo activó en paralelo: continúa como
-            // re-activación (el correo ya fue validado arriba).
         }
+
+        // Si este cliente renueva y tiene otros dispositivos activos en una licencia previa,
+        // migrarlos atómicamente a la nueva clave para sincronización inmediata.
+        // v49: a prueba de colisiones de PK compuesta (license_key, device_id):
+        // primero se eliminan las filas destino que colisionarían.
+        // Nota: usa effectiveClienteId — tras el merge de renovación, la clave
+        // vieja y la nueva comparten cliente (antes cada placeholder tenía el
+        // suyo y la migración no encontraba nada).
+        try {
+            await connection.execute(
+                `DELETE FROM devices WHERE license_key = ? AND device_id IN (
+                     SELECT device_id FROM devices WHERE revoked = 0 AND license_key IN (
+                       SELECT license_key FROM licencias WHERE cliente_id = ? AND license_key != ?
+                     ))`,
+                [license_key, effectiveClienteId, license_key]
+            );
+            await connection.execute(
+                `UPDATE devices SET license_key = ?, revoked = 0, revoked_at = NULL, last_seen = datetime('now')
+                 WHERE revoked = 0 AND license_key IN (
+                   SELECT license_key FROM licencias WHERE cliente_id = ? AND license_key != ?
+                 )`,
+                [license_key, effectiveClienteId, license_key]
+            );
+        } catch (_) {}
 
         // Registro del dispositivo con límite (423 = device_limit)
         const [active] = await connection.execute(
@@ -120,9 +170,9 @@ export default async function handler(req, res) {
         await connection.execute(
             `INSERT INTO devices (device_id, license_key, name, last_seen, paired_at, revoked)
              VALUES (?, ?, ?, datetime('now'), datetime('now'), 0)
-             ON CONFLICT(device_id) DO UPDATE SET
-               license_key = excluded.license_key, name = excluded.name,
-               revoked = 0, last_seen = datetime('now'), paired_at = datetime('now')`,
+             ON CONFLICT(license_key, device_id) DO UPDATE SET
+               name = excluded.name,
+               revoked = 0, revoked_at = NULL, last_seen = datetime('now'), paired_at = datetime('now')`,
             [device_id, license_key, device_name || 'Nuevo Dispositivo']
         );
 
