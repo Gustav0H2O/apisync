@@ -10,3 +10,8 @@ _seed.sql
 
 _inv.mjs
 _invlocal.mjs
+
+# Migracion de cuenta del 2026-09-30 (herramienta de una sola vez + respaldo)
+migrate.mjs
+limpiar.mjs
+migrar_backup.json
