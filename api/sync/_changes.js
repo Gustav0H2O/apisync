@@ -1,6 +1,7 @@
 import { getConnection } from '../_db.js';
 import { verifyToken, isDeviceRevoked, requireJwtSecret, applyCors } from '../_helpers.js';
 import { TABLE_SPECS } from './_tables.js';
+import { resolveSpec } from './_registry.js';
 
 const MAX_LIMIT = 500;
 
@@ -76,15 +77,16 @@ export default async function handler(req, res) {
 
         const changes = {};
         for (const [table, uuidSet] of uuidsByTable) {
-            const spec = TABLE_SPECS[table];
-            const remote = spec?.remote || `sync_${table.toLowerCase().trim()}`;
+            // Especificación desde el registro (base de datos), no desde código.
+            const spec = await resolveSpec(connection, table);
+            const remote = spec.remote;
             const uuids = [...uuidSet];
             const placeholders = uuids.map(() => '?').join(',');
 
             let sql;
             let args;
             const accountKey = String(user.licenseKey || '').trim().toUpperCase() || null;
-            if (!spec || spec.accountScoped) {
+            if (spec.accountScoped) {
                 sql = `SELECT * FROM ${remote}
                        WHERE (account_key = ? OR (account_key IS NULL AND account_email = ?)) AND uuid IN (${placeholders})`;
                 args = [accountKey, user.email, ...uuids];

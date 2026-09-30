@@ -1,6 +1,7 @@
 import { getConnection } from './_db.js';
 import { verifyToken, isDeviceRevoked, applyCors, parseExpirationDate } from './_helpers.js';
 import { changeLogStatements, ensureCursorStatement, TABLE_SPECS, normalizeRole } from './sync/_tables.js';
+import { resolveSpec } from './sync/_registry.js';
 import { sendToLicense } from './_fcm.js';
 
 /**
@@ -352,22 +353,29 @@ export default async function handler(req, res) {
         // taxes / expenses / fiscal_transmissions / user_roles con el mismo
         // patrón "gana la versión mayor", reutilizando TABLE_SPECS del feed.
         for (const tableName of simpleTables) {
-            const spec = TABLE_SPECS[tableName];
+            // Especificación desde el registro en base de datos (con fallback al
+            // código): una tabla nueva en el registro entra en el push legacy
+            // sin tocar este archivo.
+            const spec = await resolveSpec(connection, tableName);
+            if (!spec.cols.length) continue;
             const rows = Array.isArray(push[tableName]) ? push[tableName] : [];
             for (const item of rows) {
                 if (!item || !item.uuid) continue;
-                const allCols = ['uuid', 'account_email', ...spec.cols, 'deleted_at', 'version', 'updated_at'];
-                const updatable = [...spec.cols, 'deleted_at', 'updated_at', 'version'];
+                // Solo las columnas que el cliente envió y que existen en Turso.
+                const cols = spec.cols.filter((c) => item[c] !== undefined);
+                if (!cols.length) continue;
+                const allCols = ['uuid', 'account_email', ...cols, 'deleted_at', 'version', 'updated_at'];
+                const updatable = [...cols, 'deleted_at', 'updated_at', 'version'];
                 const conflictTarget = spec.conflictTarget || '(uuid)';
                 // v49r3: normalizar roles (supervisor/alias) para no violar el
                 // CHECK de user_roles y tumbar el batch atómico completo.
-                const colVals = spec.cols.map(c =>
+                const colVals = cols.map(c =>
                     (tableName === 'user_roles' && c === 'role') ? normalizeRole(item[c]) : item[c]);
                 batchStatements.push({
                     sql: `INSERT INTO ${spec.remote} (${allCols.join(', ')})
                           VALUES (${allCols.map(() => '?').join(', ')})
                           ON CONFLICT ${conflictTarget} DO UPDATE SET
-                          ${updatable.map(c => `${c} = CASE WHEN excluded.version >= ${spec.remote}.version THEN excluded.${c} ELSE ${spec.remote}.${c} END`).join(',\n                          ')}`,
+                          ${updatable.map(c => `${c} = CASE WHEN excluded.version >= ${spec.remote}.version THEN excluded.${c} ELSE ${spec.remote}.${c} END`).join(',\n                         ')}`,
                     args: mapP([item.uuid, user.email, ...colVals, item.deleted_at, item.version, item.updated_at]),
                 });
                 logChange(tableName, item.uuid, item.deleted_at);

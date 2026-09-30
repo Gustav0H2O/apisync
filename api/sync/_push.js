@@ -6,6 +6,7 @@ import {
     resolveTableOrder, CORE_TABLE_RULES,
 } from './_tables.js';
 import { ensureMirrorTables, getTableColumns } from './_ensure.js';
+import { resolveSpec, physicalColumns, writableColumns } from './_registry.js';
 import { sendToLicense } from '../_fcm.js';
 
 /**
@@ -79,14 +80,22 @@ export default async function handler(req, res) {
             if (!Array.isArray(rows) || !rows.length) continue;
 
             const rule = CORE_TABLE_RULES[table] || {};
-            const spec = TABLE_SPECS[table] || {
-                remote: `sync_${table.toLowerCase().trim()}`,
-                accountScoped: true,
-                cols: Object.keys(rows[0] || {}).filter(c => !['uuid', 'account_email', 'version', 'updated_at', 'deleted_at'].includes(c)),
-                businessKey: rule.businessKey || null,
-                sealed: rule.sealed || false,
-                appendOnly: rule.appendOnly || false,
-            };
+            // La especificación se resuelve desde el REGISTRO en base de datos
+            // (con descubrimiento físico de columnas). Si la tabla no está
+            // registrada se cae al comportamiento de siempre: se infieren las
+            // columnas de la primera fila que llega.
+            let spec = await resolveSpec(connection, table);
+            if (!TABLE_SPECS[table] && !spec.cols.length) {
+                spec = {
+                    ...spec,
+                    cols: Object.keys(rows[0] || {}).filter(
+                        c => !['uuid', 'account_email', 'version', 'updated_at', 'deleted_at'].includes(c)
+                    ),
+                    businessKey: rule.businessKey || null,
+                    sealed: rule.sealed || false,
+                    appendOnly: rule.appendOnly || false,
+                };
+            }
             const physicalCols = await getTableColumns(connection, table);
 
             const uuids = rows.map(r => String(r.uuid || '')).filter(Boolean);
@@ -434,71 +443,52 @@ async function buildProfileStatements(connection, email, profile, statements) {
         return 'change_limit';
     }
 
-    // Introspección física para soportar config_data en JSON
-    let hasConfigDataCol = false;
-    try {
-        const [infoRows] = await connection.execute('PRAGMA table_info(clientes)');
-        hasConfigDataCol = infoRows.some(r => r.name === 'config_data');
-    } catch (_) {}
+    // ── Perfil: construcción DINÁMICA del UPDATE ─────────────────────────────
+    // Antes este bloque listaba ~40 columnas escritas a mano: agregar una
+    // preferencia nueva obligaba a editar la API y desplegar. Ahora se arma con
+    // las columnas que existen físicamente en `clientes` y que el cliente
+    // envió, y todo lo demás (incluido `config_data`) se resuelve por
+    // introspección.
+    const profileCols = await physicalColumns(connection, 'clientes');
+    const hasConfigDataCol = profileCols.has('config_data');
 
-    // Empaquetar todas las propiedades no identitarias en JSON para extensibilidad infinita
-    const configDataObj = {};
-    for (const [k, v] of Object.entries(profile)) {
-        if (!['business_name', 'slogan', 'rif', 'address', 'user_name', 'user_phone', 'version', 'email'].includes(k)) {
-            configDataObj[k] = v;
+    // Campos que nunca se copian del payload: los controla el servidor.
+    const RESERVED = new Set([
+        'id', 'email', 'version', 'created_at', 'updated_at', 'config_data',
+        'profile_change_count', 'profile_change_limit', 'clear_catalog_logo',
+    ]);
+
+    const setClauses = [];
+    const profileArgs = [];
+    for (const [key, value] of Object.entries(profile)) {
+        if (RESERVED.has(key)) continue;
+        if (!profileCols.has(key)) continue; // la columna no existe: se ignora
+        setClauses.push(`${key} = ?`);
+        profileArgs.push(value);
+    }
+
+    // El logo es un caso especial: si el cliente lo marcó para borrar, se
+    // anula; si no, se conserva el que hay (nunca se pisa con un vacío).
+    const clearLogo = profile.clear_catalog_logo === true;
+    if (profileCols.has('catalog_logo_path')) {
+        if (clearLogo) {
+            setClauses.push('catalog_logo_path = NULL');
+        } else {
+            setClauses.push('catalog_logo_path = catalog_logo_path');
         }
     }
-    const configDataJson = JSON.stringify(configDataObj);
 
-    const mapP = (arr) => arr.map(v => v === undefined ? null : v);
-    
-    let updateSql = `UPDATE clientes SET
-            business_name = ?, slogan = ?, rif = ?, address = ?, user_name = ?,
-            user_phone = ?, accent_color = ?, header_color = ?, version = ?,
-            exchange_rate_mode = ?, working_currency = ?, display_currency = ?,
-            print_currency = ?, invoice_print_currency = ?, estimate_print_currency = ?,
-            delivery_note_print_currency = ?, manual_rate = ?, use_latest_rate = ?,
-            usd_rate_latest = ?, usd_rate_previous = ?, show_banner_invoice = ?,
-            show_banner_quote = ?, show_banner_delivery = ?, banner_color = ?,
-            show_exchange_rate = ?, config_style = ?, products_by_stock = ?,
-            catalog_document_title = ?, catalog_layout_style = ?,
-            catalog_logo_path = CASE WHEN ? = 1 THEN NULL ELSE catalog_logo_path END,
-            catalog_logo_position = ?, catalog_banner_color = ?, catalog_header_color = ?,
-            catalog_show_stock = ?, catalog_show_price_bs = ?, catalog_show_price_usd = ?,
-            catalog_show_iva = ?, catalog_show_address = ?, catalog_show_phone = ?,
-            catalog_show_slogan = ?, catalog_show_exchange_rate = ?,
-            catalog_show_product_code = ?, catalog_show_product_description = ?,
-            catalog_show_promos = ?, catalog_show_wholesale = ?,
-            catalog_footer_text = ?, catalog_grayscale_mode = ?,
-            history_new_button_action = ?, history_clients_button_action = ?,
-            profile_change_count = ?`;
+    // Contador de cambios de identidad: lo lleva el servidor.
+    if (profileCols.has('profile_change_count')) {
+        setClauses.push('profile_change_count = ?');
+        profileArgs.push(identityChanged ? count + 1 : count);
+    }
+    if (profileCols.has('products_by_stock') && profile.products_by_stock === undefined) {
+        setClauses.push('products_by_stock = products_by_stock');
+    }
 
-    const argsList = [
-        profile.business_name, profile.slogan, profile.rif, profile.address,
-        profile.user_name, profile.user_phone, profile.accent_color,
-        profile.header_color, incomingVersion, profile.exchange_rate_mode,
-        profile.working_currency, profile.display_currency, profile.print_currency,
-        profile.invoice_print_currency, profile.estimate_print_currency,
-        profile.delivery_note_print_currency, profile.manual_rate,
-        profile.use_latest_rate, profile.usd_rate_latest, profile.usd_rate_previous,
-        profile.show_banner_invoice, profile.show_banner_quote,
-        profile.show_banner_delivery, profile.banner_color,
-        profile.show_exchange_rate, profile.config_style,
-        (profile.products_by_stock !== undefined) ? profile.products_by_stock : 1,
-        profile.catalog_document_title, profile.catalog_layout_style,
-        profile.clear_catalog_logo ? 1 : 0,
-        profile.catalog_logo_position, profile.catalog_banner_color,
-        profile.catalog_header_color, profile.catalog_show_stock,
-        profile.catalog_show_price_bs, profile.catalog_show_price_usd,
-        profile.catalog_show_iva, profile.catalog_show_address,
-        profile.catalog_show_phone, profile.catalog_show_slogan,
-        profile.catalog_show_exchange_rate, profile.catalog_show_product_code,
-        profile.catalog_show_product_description, profile.catalog_show_promos,
-        profile.catalog_show_wholesale, profile.catalog_footer_text,
-        profile.catalog_grayscale_mode, profile.history_new_button_action,
-        profile.history_clients_button_action,
-        identityChanged ? count + 1 : count,
-    ];
+    let updateSql = `UPDATE clientes SET ${setClauses.join(', ')}`;
+    const argsList = profileArgs;
 
     if (hasConfigDataCol) {
         updateSql += `, config_data = json_patch(COALESCE(config_data, '{}'), ?)`;
