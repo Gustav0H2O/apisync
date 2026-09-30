@@ -481,6 +481,12 @@ async function buildProfileStatements(connection, email, profile, statements) {
         }
     }
 
+    // La versión del perfil la lleva el servidor (control de concurrencia:
+    // solo `version < incoming` llega aquí). Sin escribirla, un push con una
+    // versión menor sobrescribiría datos más nuevos.
+    setClauses.push('version = ?');
+    profileArgs.push(incomingVersion);
+
     // Contador de cambios de identidad: lo lleva el servidor.
     if (profileCols.has('profile_change_count')) {
         setClauses.push('profile_change_count = ?');
