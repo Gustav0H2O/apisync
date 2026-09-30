@@ -1,21 +1,21 @@
-﻿# Herramientas locales de mantenimiento (no son parte del runtime)
+﻿# Herramientas locales de una sola vez + respaldos de la base de produccion
+# (NUNCA van al repo: los respaldos contienen datos del cliente)
 q.mjs
 qfile.mjs
 test_registry.mjs
 _fixreg.mjs
 migrate_clientes_v3.mjs
-# Respaldos de la base de produccion: NUNCA en git
-backup_clientes_pre_v3.json
 _seed.sql
-
 _inv.mjs
 _invlocal.mjs
-
-# Migracion de cuenta del 2026-09-30 (herramienta de una sola vez + respaldo)
 migrate.mjs
 limpiar.mjs
 limpiar2.mjs
 reset.mjs
+generar.mjs
+backup_clientes_pre_v3.json
 migrar_backup.json
 limpiar_backup.json
 nuevo_backup.json
+bd_nueva_backup.json
+licencias_generadas.txt
