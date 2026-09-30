@@ -422,7 +422,32 @@ async function handleToken(req, res) {
         }
     }
     
-    // v49r2: la revocación solo vale contra la licencia EFECTIVA. La fila de
+    // Una sola clave por cuenta.
+//
+// La cuenta del usuario acumula una clave por renovacion/rotacion, y el
+// ambito de sincronizacion es la clave de licencia. Con varias claves vivas,
+// cada caja que emparejaba con una distinta escribia en un ambito diferente:
+// los datos quedaban partidos entre claves y las cajas no se veian entre si.
+// Ahora el token siempre lleva la clave canonica de la cuenta (la vigente mas
+// larga), de modo que da igual con que clave se haya emparejado la caja.
+if (licenseEmail) {
+    const canonRows = await queryDB(
+        `SELECT l.license_key FROM licencias l
+         JOIN clientes c ON l.cliente_id = c.id
+         LEFT JOIN detalles_saas ds ON ds.licencia_id = l.id
+         WHERE LOWER(TRIM(c.email)) = ? AND l.usado = 1
+         ORDER BY CASE WHEN LOWER(TRIM(l.tipo)) = 'unique' THEN '9999-12-31' ELSE COALESCE(ds.fecha_vencimiento, '1970-01-01') END DESC, l.id DESC LIMIT 1`,
+        [licenseEmail]
+    );
+    if (canonRows.length) {
+        const canonKey = String(canonRows[0].license_key).trim().toUpperCase();
+        if (canonKey && canonKey !== effectiveKey) {
+            effectiveKey = canonKey;
+        }
+    }
+}
+
+// v49r2: la revocación solo vale contra la licencia EFECTIVA. La fila de
     // la licencia efectiva manda; las filas de OTRAS licencias de la MISMA
     // cuenta (mismo email: rotaciones/renovaciones) jamás bloquean — antes un
     // LIMIT 1 sin orden podía devolver una fila revocada vieja y el equipo
