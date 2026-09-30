@@ -1,0 +1,11 @@
+# El plan Hobby de Vercel permite máximo 12 funciones serverless por
+# despliegue, y cada archivo de api/ que NO empieza con "_" cuenta como una.
+#
+# El proyecto está en 13 desde que se añadió cron-bcv.js, y por eso TODOS los
+# despliegues fallaban con:
+#   exceeded_serverless_functions_per_deployment
+#
+# Se excluye aquí para volver a 12. El archivo sigue en el repositorio: para
+# reactivarlo hay que subir a plan Pro (o compactar endpoints para liberar un
+# cupo) y quitar esta línea.
+api/cron-bcv.js
