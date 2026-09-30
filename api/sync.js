@@ -113,10 +113,13 @@ export default async function handler(req, res) {
         // Change-feed v47: cada escritura del flujo legacy también registra su
         // entrada en change_log para que los dispositivos v47 la vean en
         // tiempo real (transición v46/v47 — INFORME_API_SYNC.md §2.4).
-        batchStatements.push(ensureCursorStatement(user.email));
+        // Identidad canónica de la cuenta (license_key normalizada): el feed y
+        // el cursor la usan para no depender del correo.
+        const accountKey = String(user.licenseKey || '').trim().toUpperCase() || null;
+        batchStatements.push(ensureCursorStatement(user.email, accountKey));
         const logChange = (table, uuid, deletedAt) => {
             batchStatements.push(...changeLogStatements(
-                user.email, table, uuid, deletedAt ? 'delete' : 'upsert'
+                user.email, table, uuid, deletedAt ? 'delete' : 'upsert', accountKey
             ));
         };
 

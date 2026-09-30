@@ -312,7 +312,7 @@ export default async function handler(req, res) {
         let profileResult = null;
         if (profile) {
             profileResult = await buildProfileStatements(
-                connection, user.email, profile, statements
+                connection, user.email, profile, statements, accountKey
             );
         }
 
@@ -330,8 +330,8 @@ export default async function handler(req, res) {
         // cuenta con un push SILENCIOSO (solo-datos) para que sincronicen aunque
         // estén cerrados. Best-effort: nunca rompe la respuesta del push.
         if (applied.length > 0 ||
-            profileResult === 'applied' ||
-            profileResult === 'change_limit') {
+            profileResult?.status === 'applied' ||
+            profileResult?.status === 'change_limit') {
             try {
                 await sendToLicense(connection, user.licenseKey, {
                     excludeDeviceId: user.deviceId,
@@ -347,12 +347,22 @@ export default async function handler(req, res) {
             applied, conflicts, rejected, aliases,
         };
         if (profileResult) {
-            response.profile_status = profileResult;
+            response.profile_status = profileResult.status;
+            // El límite y el contador vigentes en la nube viajan en TODA
+            // respuesta de push: son los que fija soporte (editando la BD) y no
+            // dependen de la versión del documento, así que la caja los refleja
+            // sin esperar a un pull que nunca llegaría.
+            if (profileResult.limit !== undefined) {
+                response.profile_change_limit = profileResult.limit;
+            }
+            if (profileResult.count !== undefined) {
+                response.profile_change_count = profileResult.count;
+            }
             // Identidad rechazada por el límite: la caja debe volver al perfil
             // autoritativo de la nube. Su versión local ya quedó alineada con
             // la del servidor, así que ni el pull (misma versión) ni el push
             // siguiente (unchanged) volverían a reconciliarla.
-            if (profileResult === 'change_limit') {
+            if (profileResult.status === 'change_limit') {
                 try {
                     const [pr] = await connection.execute(
                         `SELECT *, COALESCE(profile_change_limit, 3) AS profile_change_limit,
@@ -436,7 +446,7 @@ function upsertStatement(spec, email, row, uuid, version, now, physicalCols = nu
     return { sql, args: vals };
 }
 
-async function buildProfileStatements(connection, email, profile, statements) {
+async function buildProfileStatements(connection, email, profile, statements, accountKey = null) {
     const [rows] = await connection.execute(
         `SELECT business_name, slogan, rif, address, user_name, user_phone,
                 COALESCE(profile_change_count, 0) AS profile_change_count,
@@ -445,12 +455,18 @@ async function buildProfileStatements(connection, email, profile, statements) {
          FROM clientes WHERE email = ? LIMIT 1`,
         [email]
     );
-    if (!rows.length) return 'not_found';
+    if (!rows.length) return { status: 'not_found' };
 
     const current = rows[0];
     const incomingVersion = toNumber(profile.version, 1);
+    const count = toNumber(current.profile_change_count, 0);
+    const limit = toNumber(current.profile_change_limit, 3);
+
     if (incomingVersion <= toNumber(current.version, 1)) {
-        return 'unchanged'; // el servidor ya tiene esta versión o una más nueva
+        // El servidor ya tiene esta versión (o una más nueva): no se escribe
+        // nada, pero el límite y el contador vigentes viajan igual en la
+        // respuesta para que la caja refleje lo que hay en la nube.
+        return { status: 'unchanged', limit, count };
     }
 
     const identityChanged =
@@ -461,8 +477,6 @@ async function buildProfileStatements(connection, email, profile, statements) {
         (current.user_name || '') !== (profile.user_name || '') ||
         (current.user_phone || '') !== (profile.user_phone || '');
 
-    const count = toNumber(current.profile_change_count, 0);
-    const limit = toNumber(current.profile_change_limit, 3);
     // El límite protege SOLO la identidad del negocio (nombre, eslogan, RIF,
     // dirección y datos de la persona). El resto de la configuración es
     // operativa y se sincroniza SIEMPRE: antes, un perfil en su límite
@@ -487,6 +501,10 @@ async function buildProfileStatements(connection, email, profile, statements) {
     if (profileUpdate) statements.push(profileUpdate);
     // Se registra en el feed SIEMPRE que algo se escribió: con la identidad
     // bloqueada la configuración igual cambió y las otras cajas deben verla.
-    statements.push(...changeLogStatements(email, 'profile', email, 'upsert'));
-    return identityBlocked ? 'change_limit' : 'applied';
+    statements.push(...changeLogStatements(email, 'profile', email, 'upsert', accountKey));
+    return {
+        status: identityBlocked ? 'change_limit' : 'applied',
+        limit,
+        count: identityBlocked ? count : (identityChanged ? count + 1 : count),
+    };
 }

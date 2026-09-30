@@ -32,6 +32,24 @@ export default async function handler(req, res) {
     try {
         const connection = getConnection();
 
+        // Contadores del protocolo de cambios de perfil: los fija la nube y
+        // soporte puede ajustarlos editando la BD directamente. Un ajuste así
+        // NO crea entrada en `change_log` ni sube `version`, de modo que el
+        // cliente jamás se enteraría por el feed: viajan en CADA respuesta.
+        async function profileCounters() {
+            const [rows] = await connection.execute(
+                `SELECT COALESCE(profile_change_limit, 3) AS profile_change_limit,
+                        COALESCE(profile_change_count, 0) AS profile_change_count
+                 FROM clientes WHERE email = ? LIMIT 1`,
+                [user.email]
+            );
+            const r = rows[0] || {};
+            return {
+                profile_change_limit: Number(r.profile_change_limit ?? 3),
+                profile_change_count: Number(r.profile_change_count ?? 0),
+            };
+        }
+
         const accountKey = String(user.licenseKey || '').trim().toUpperCase() || null;
         const [entries] = await connection.execute(
             `SELECT seq, table_name, row_uuid FROM change_log
@@ -46,6 +64,7 @@ export default async function handler(req, res) {
                 hasMore: false,
                 changes: {},
                 notifications: [],
+                ...(await profileCounters()),
             });
         }
 
@@ -122,7 +141,13 @@ export default async function handler(req, res) {
             notifications = rows;
         }
 
-        const payload = { nextSeq, hasMore, changes, notifications };
+        const payload = {
+            nextSeq,
+            hasMore,
+            changes,
+            notifications,
+            ...(await profileCounters()),
+        };
 
         if (profileChanged) {
             const [profileRows] = await connection.execute(

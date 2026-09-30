@@ -55,8 +55,10 @@ export default async function handler(req, res) {
                     COALESCE((SELECT MAX(id) FROM app_notifications
                               WHERE target_email IS NULL OR target_email = ?), 0) AS notif_seq,
                     (SELECT COUNT(*) FROM app_notifications
-                      WHERE is_active = 1 AND (target_email IS NULL OR target_email = ?)) AS notif_active`,
-                [accountKey, user.email, user.email, user.email]
+                      WHERE is_active = 1 AND (target_email IS NULL OR target_email = ?)) AS notif_active,
+                    COALESCE((SELECT profile_change_limit FROM clientes WHERE email = ? LIMIT 1), 3) AS profile_change_limit,
+                    COALESCE((SELECT profile_change_count FROM clientes WHERE email = ? LIMIT 1), 0) AS profile_change_count`,
+                [accountKey, user.email, user.email, user.email, user.email, user.email]
             );
 
             const row = rows[0] || {};
@@ -64,6 +66,8 @@ export default async function handler(req, res) {
                 seq: Number(row.seq || 0),
                 notif_seq: Number(row.notif_seq || 0),
                 notif_active: Number(row.notif_active || 0),
+                profile_change_limit: Number(row.profile_change_limit ?? 3),
+                profile_change_count: Number(row.profile_change_count ?? 0),
             };
         }
 
