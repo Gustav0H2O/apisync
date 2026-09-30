@@ -1,6 +1,6 @@
 import { getConnection } from './_db.js';
 import { verifyToken, isDeviceRevoked, applyCors, parseExpirationDate } from './_helpers.js';
-import { changeLogStatements, ensureCursorStatement, TABLE_SPECS, normalizeRole } from './sync/_tables.js';
+import { changeLogStatements, ensureCursorStatement, TABLE_SPECS, normalizeRole, toNumber } from './sync/_tables.js';
 import { resolveSpec } from './sync/_registry.js';
 import { buildProfileUpdate, mergeProfileConfig } from './sync/_profile.js';
 import { sendToLicense } from './_fcm.js';
@@ -128,11 +128,14 @@ export default async function handler(req, res) {
             let isProfileChange = false;
             let currentCount = 0;
             let currentLimit = 3;
+            let currentVersion = 0;
 
             if (rows.length > 0) {
                 const currentProfile = rows[0];
-                currentCount = currentProfile.profile_change_count || 0;
-                currentLimit = currentProfile.profile_change_limit !== null ? currentProfile.profile_change_limit : 3;
+                currentCount = toNumber(currentProfile.profile_change_count, 0);
+                currentLimit = currentProfile.profile_change_limit !== null
+                    ? toNumber(currentProfile.profile_change_limit, 3) : 3;
+                currentVersion = toNumber(currentProfile.version, 1);
 
                 if (
                     (currentProfile.business_name || '') !== (profile.business_name || '') ||
@@ -148,34 +151,45 @@ export default async function handler(req, res) {
                 isProfileChange = true; // Si no existe (raro), se toma como cambio
             }
 
-            if (isProfileChange && currentCount >= currentLimit) {
-                // Si intenta cambiar campos de perfil y ya alcanzó el límite, rechazamos
-                throw new Error("Límite de cambios de perfil alcanzado. Sincronización rechazada.");
-            }
+            // El legacy reenvía el perfil en CADA ciclo de snapshot, así que el
+            // mismo perfil llega una y otra vez. Solo cuenta como cambio —y solo
+            // reescribe el servidor— cuando la versión AVANZA de verdad: con
+            // `versionOp: '<='` una caja que aún no había bajado los datos
+            // nuevos pisaba el perfil recién guardado en cada vuelta, y cada
+            // pisotón suma un cambio al contador hasta agotar el límite.
+            const incomingVersion = toNumber(profile.version, 1);
+            const versionAdvances = incomingVersion > currentVersion;
 
-            // El UPDATE del perfil se construye en `_profile.js` (fuente ÚNICA
-            // compartida con el push v47). Antes vivía duplicado y con ~40
-            // columnas escritas a mano; al limpiar `clientes` la copia legacy
-            // siguió pidiendo columnas inexistentes y tumbó el push entero
-            // —con los roles dentro—, que es como se rompió la edición de
-            // roles. Una sola implementación no puede volver a divergir.
-            const profileUpdate = await buildProfileUpdate({
-                connection,
-                email: user.email,
-                profile: {
-                    ...profile,
-                    // El legacy sube el logo como buffer en el multipart.
-                    catalog_logo_path: catalogLogoBuffer || profile.catalog_logo_path,
-                },
-                incomingVersion: Number(profile.version || 1),
-                profileChangeCount: isProfileChange ? currentCount + 1 : currentCount,
-                versionOp: '<=',
-            });
-            if (profileUpdate) batchStatements.push(profileUpdate);
-            // Solo se registra en el feed cuando la versión avanza de verdad
-            // (el cliente legacy envía el perfil en CADA ciclo).
-            const currentVersion = rows.length ? Number(rows[0].version || 1) : 0;
-            if (Number(profile.version || 1) > currentVersion) {
+            if (!versionAdvances) {
+                // Perfil idéntico al del servidor: no se toca nada, así el
+                // contador refleja solo ediciones REALES.
+            } else if (isProfileChange && currentCount >= currentLimit) {
+                // Límite alcanzado: se rechaza SOLO el perfil y el push sigue
+                // con los datos operativos. Antes se hacía `throw` y tumbaba el
+                // batch entero, con los roles dentro.
+                logChange('profile_limit', user.email, null);
+            } else {
+                // El UPDATE del perfil se construye en `_profile.js` (fuente ÚNICA
+                // compartida con el push v47). Antes vivía duplicado y con ~40
+                // columnas escritas a mano; al limpiar `clientes` la copia legacy
+                // siguió pidiendo columnas inexistentes y tumbó el push entero
+                // —con los roles dentro—, que es como se rompió la edición de
+                // roles. Una sola implementación no puede volver a divergir.
+                const profileUpdate = await buildProfileUpdate({
+                    connection,
+                    email: user.email,
+                    profile: {
+                        ...profile,
+                        // El legacy sube el logo como buffer en el multipart.
+                        catalog_logo_path: catalogLogoBuffer || profile.catalog_logo_path,
+                    },
+                    incomingVersion,
+                    profileChangeCount: isProfileChange ? currentCount + 1 : currentCount,
+                    // Estricto: una versión igual o anterior NUNCA pisa el perfil
+                    // que ya tiene el servidor (last-write-wins por versión).
+                    versionOp: '<',
+                });
+                if (profileUpdate) batchStatements.push(profileUpdate);
                 logChange('profile', user.email, null);
             }
         }
