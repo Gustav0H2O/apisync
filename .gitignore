@@ -7,3 +7,6 @@ migrate_clientes_v3.mjs
 # Respaldos de la base de produccion: NUNCA en git
 backup_clientes_pre_v3.json
 _seed.sql
+
+_inv.mjs
+_invlocal.mjs
