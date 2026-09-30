@@ -5,6 +5,14 @@
     { "source": "/api/proxy", "destination": "/api/db.js" },
     { "source": "/api/auth/token", "destination": "/api/auth/token.js?action=token" },
     { "source": "/api/sync/:action", "destination": "/api/sync_router.js?action=:action" },
-    { "source": "/api/sync", "destination": "/api/sync.js" }
+    { "source": "/api/sync", "destination": "/api/sync.js" },
+    { "source": "/api/license/renew", "destination": "/api/license/maintenance.js?action=renew" },
+    { "source": "/api/license/rotate-key", "destination": "/api/license/maintenance.js?action=rotate-key" }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron-bcv",
+      "schedule": "0 10 * * *"
+    }
   ]
 }

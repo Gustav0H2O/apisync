@@ -1,11 +1,14 @@
 # El plan Hobby de Vercel permite máximo 12 funciones serverless por
 # despliegue, y cada archivo de api/ que NO empieza con "_" cuenta como una.
 #
-# El proyecto está en 13 desde que se añadió cron-bcv.js, y por eso TODOS los
-# despliegues fallaban con:
-#   exceeded_serverless_functions_per_deployment
+# Con `api/cron-bcv.js` el proyecto llegó a 13 y TODOS los despliegues
+# fallaban con `exceeded_serverless_functions_per_deployment`, aunque el build
+# terminara bien.
 #
-# Se excluye aquí para volver a 12. El archivo sigue en el repositorio: para
-# reactivarlo hay que subir a plan Pro (o compactar endpoints para liberar un
-# cupo) y quitar esta línea.
-api/cron-bcv.js
+# Para que el cron quepa se fusionaron `renew` y `rotate-key` en UNA función
+# (`license/maintenance.js?action=...`), con reescrituras equivalentes en
+# vercel.json. Este archivo queda vacío a propósito: si se vuelve a superar el
+# límite, conviene fusionar otro par de endpoints pequeños (los candidatos son
+# `auth/pin-recovery.js` y `auth/pin-verify.js`) en vez de excluir funcionalidad.
+#
+# Para contar funciones: Get-ChildItem -Recurse -Filter *.js api | Where-Object { $_.Name -notmatch '^_' }
