@@ -190,6 +190,12 @@ export function normalizeRole(raw) {
 /// SIEMPRE dentro del mismo batch atómico que la escritura que registran.
 // v49: identidad canónica = account_key (license_key); account_email se
 // conserva como fallback para clientes viejos.
+//
+// El seq se toma de `MAX(change_log) + 1`, NO de `account_cursor`: si el cursor
+// llegara a quedar por detrás (batch legacy a medias, un rollback, una
+// escritura manual), leer el cursor hacía que el siguiente INSERT chocara con
+// el índice UNIQUE (account_email, seq) y tumbaba el push entero de forma
+// permanente. MAX(change_log) es la única fuente que no puede quedar atrás.
 export function changeLogStatements(email, tableName, rowUuid, op, accountKey = null) {
     const key = accountKey || null;
     return [
@@ -204,8 +210,14 @@ export function changeLogStatements(email, tableName, rowUuid, op, accountKey = 
         },
         {
             sql: `INSERT INTO change_log (account_email, account_key, seq, table_name, row_uuid, op)
-                  VALUES (?, ?, (SELECT seq FROM account_cursor WHERE account_email = ?), ?, ?, ?)`,
+                  VALUES (?, ?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM change_log WHERE account_email = ?), ?, ?, ?)`,
             args: [email, key, email, tableName, rowUuid, op],
+        },
+        // El cursor se realinea con lo realmente insertado: así nunca vuelve a
+        // quedar por detrás de MAX(change_log) aunque otra ruta lo moviera.
+        {
+            sql: 'UPDATE account_cursor SET seq = (SELECT COALESCE(MAX(seq), 0) FROM change_log WHERE account_email = ?) WHERE account_email = ?',
+            args: [email, email],
         },
     ];
 }
