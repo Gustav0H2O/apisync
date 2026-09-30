@@ -15,5 +15,7 @@ _invlocal.mjs
 migrate.mjs
 limpiar.mjs
 limpiar2.mjs
+reset.mjs
 migrar_backup.json
 limpiar_backup.json
+nuevo_backup.json
