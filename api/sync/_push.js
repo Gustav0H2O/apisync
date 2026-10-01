@@ -322,8 +322,8 @@ export default async function handler(req, res) {
         }
 
         const [seqRows] = await connection.execute(
-            'SELECT COALESCE((SELECT seq FROM account_cursor WHERE account_key = ? OR (account_key IS NULL AND account_email = ?)), 0) AS seq',
-            [accountKey, user.email]
+            'SELECT COALESCE((SELECT seq FROM account_cursor WHERE account_email = ?), 0) AS seq',
+            [user.email]
         );
 
         // Tiempo real: si algo cambió, despertar a los OTROS dispositivos de la

@@ -48,17 +48,18 @@ export default async function handler(req, res) {
         const connection = getConnection();
 
         async function fetchCursorState() {
-            const accountKey = String(user.licenseKey || '').trim().toUpperCase() || null;
+            // El cursor es de la CUENTA (correo), no de la licencia: así un
+            // equipo que renovó a una clave nueva sigue viendo el mismo feed.
             const [rows] = await connection.execute(
                 `SELECT
-                    COALESCE((SELECT seq FROM account_cursor WHERE account_key = ? OR (account_key IS NULL AND account_email = ?)), 0) AS seq,
+                    COALESCE((SELECT seq FROM account_cursor WHERE account_email = ?), 0) AS seq,
                     COALESCE((SELECT MAX(id) FROM app_notifications
                               WHERE target_email IS NULL OR target_email = ?), 0) AS notif_seq,
                     (SELECT COUNT(*) FROM app_notifications
                       WHERE is_active = 1 AND (target_email IS NULL OR target_email = ?)) AS notif_active,
                     COALESCE((SELECT profile_change_limit FROM clientes WHERE email = ? LIMIT 1), 3) AS profile_change_limit,
                     COALESCE((SELECT profile_change_count FROM clientes WHERE email = ? LIMIT 1), 0) AS profile_change_count`,
-                [accountKey, user.email, user.email, user.email, user.email, user.email]
+                [user.email, user.email, user.email, user.email, user.email]
             );
 
             const row = rows[0] || {};

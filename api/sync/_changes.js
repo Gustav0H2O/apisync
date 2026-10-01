@@ -50,12 +50,16 @@ export default async function handler(req, res) {
             };
         }
 
-        const accountKey = String(user.licenseKey || '').trim().toUpperCase() || null;
+        // El feed pertenece a la CUENTA (correo), NO a la licencia. Al renovar o
+        // cambiar de clave, las entradas antiguas quedan guardadas con la clave
+        // vieja: filtrarlas por licencia las volvía invisibles para los equipos
+        // con la clave nueva (una caja veía los datos compartidos y la otra no).
+        // El correo es la identidad estable de la cuenta.
         const [entries] = await connection.execute(
             `SELECT seq, table_name, row_uuid FROM change_log
-             WHERE (account_key = ? OR (account_key IS NULL AND account_email = ?)) AND seq > ?
+             WHERE account_email = ? AND seq > ?
              ORDER BY seq ASC LIMIT ?`,
-            [accountKey, user.email, since, limit]
+            [user.email, since, limit]
         );
 
         if (!entries.length) {
@@ -105,17 +109,18 @@ export default async function handler(req, res) {
 
             let sql;
             let args;
-            const accountKey = String(user.licenseKey || '').trim().toUpperCase() || null;
             if (spec.accountScoped) {
+                // Mismo criterio que el feed: el alcance es la cuenta (correo),
+                // para no perder las filas guardadas bajo una clave anterior.
                 sql = `SELECT * FROM ${remote}
-                       WHERE (account_key = ? OR (account_key IS NULL AND account_email = ?)) AND uuid IN (${placeholders})`;
-                args = [accountKey, user.email, ...uuids];
+                       WHERE account_email = ? AND uuid IN (${placeholders})`;
+                args = [user.email, ...uuids];
             } else {
                 // invoice_items: el alcance de cuenta viene por la factura padre si no tiene propio.
                 sql = `SELECT i.* FROM ${remote} i
                        JOIN ${spec.parent.table} p ON p.uuid = i.${spec.parent.fk}
-                       WHERE (p.account_key = ? OR (p.account_key IS NULL AND p.account_email = ?)) AND i.uuid IN (${placeholders})`;
-                args = [accountKey, user.email, ...uuids];
+                       WHERE p.account_email = ? AND i.uuid IN (${placeholders})`;
+                args = [user.email, ...uuids];
             }
 
             try {

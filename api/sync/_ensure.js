@@ -146,6 +146,10 @@ export const INFRA_DDL = [
     )`,
     `CREATE INDEX IF NOT EXISTS idx_change_log_account_seq
         ON change_log (account_key, account_email, seq)`,
+    // El feed ahora se lee por cuenta (correo): este índice evita escanear toda
+    // la tabla en cada pull.
+    `CREATE INDEX IF NOT EXISTS idx_change_log_email_seq
+        ON change_log (account_email, seq)`,
     `CREATE TABLE IF NOT EXISTS app_notifications (
         id INTEGER PRIMARY KEY AUTOINCREMENT, target_email TEXT,
         condition_key TEXT, condition_op TEXT, condition_val TEXT,
