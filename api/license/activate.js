@@ -117,6 +117,28 @@ export default async function handler(req, res) {
             accountEmail = normalizedEmail;
         }
 
+        // ── Reglas de identidad de la cuenta ────────────────────────────────
+        // El par (correo, licencia) identifica UNA cuenta, y sus equipos se
+        // agregan VINCULÁNDOSE desde uno ya autorizado. Un equipo que fue
+        // desvinculado queda fuera: no puede reactivarse por esta vía con la
+        // misma licencia ni con otra del mismo negocio; solo el administrador
+        // puede volver a autorizarlo (reactivación en Turso o vinculación).
+        const [wasRevoked] = await connection.execute(
+            `SELECT 1 AS x FROM devices d
+               JOIN licencias l ON l.license_key = d.license_key
+              WHERE l.cliente_id = ? AND d.device_id = ? AND d.revoked = 1
+              LIMIT 1`,
+            [effectiveClienteId, device_id]
+        );
+        if (wasRevoked.length) {
+            return res.status(409).json({
+                error: 'device_revoked',
+                message: 'Este equipo fue desvinculado de la cuenta. Pide al '
+                    + 'administrador que lo autorice de nuevo, o activa una '
+                    + 'cuenta distinta.',
+            });
+        }
+
         if (!usado) {
             // Ganador atómico de la activación
             const [result] = await connection.execute(
@@ -156,6 +178,33 @@ export default async function handler(req, res) {
                 [license_key, effectiveClienteId, license_key]
             );
         } catch (_) {}
+
+        // La licencia ya está en uso por OTRO equipo: este debe VINCULARSE, no
+        // activarse como si fuera nuevo. Así el par correo+licencia se mantiene
+        // único y el alta de equipos pasa siempre por el administrador.
+        if (usado) {
+            const [mine] = await connection.execute(
+                `SELECT 1 AS x FROM devices
+                  WHERE license_key = ? AND device_id = ? AND revoked = 0
+                  LIMIT 1`,
+                [license_key, device_id]
+            );
+            if (!mine.length) {
+                const [activeRows] = await connection.execute(
+                    `SELECT COUNT(*) AS c FROM devices
+                      WHERE license_key = ? AND revoked = 0`,
+                    [license_key]
+                );
+                if (Number(activeRows[0]?.c || 0) > 0) {
+                    return res.status(409).json({
+                        error: 'already_used',
+                        message: 'Esta licencia ya está en uso. Para usar este '
+                            + 'equipo, vincúlalo desde un dispositivo '
+                            + 'autorizado (Código QR o vinculación manual).',
+                    });
+                }
+            }
+        }
 
         // Registro del dispositivo con límite (423 = device_limit)
         const [active] = await connection.execute(
