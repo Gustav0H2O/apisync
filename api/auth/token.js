@@ -217,6 +217,39 @@ async function handleUnlink(req, res) {
                     `UPDATE devices SET revoked = 1, revoked_at = CURRENT_TIMESTAMP, last_seen = CURRENT_TIMESTAMP WHERE UPPER(TRIM(license_key)) = ? AND device_id = ?`,
                     [lic, devId]
                 );
+                // El ROL del terminal también se desvincula, igual que en el
+                // camino con token: sin esto, al volver a vincular la caja la
+                // nube le devolvía el rol que tenía ANTES de revocarla y
+                // quedaba operando con permisos que el administrador ya le
+                // había quitado. Se acota por dueño de la licencia para no
+                // tocar filas de otra cuenta.
+                const ownerRows = await queryDB(
+                    `SELECT c.email FROM licencias l JOIN clientes c ON c.id = l.cliente_id WHERE UPPER(TRIM(l.license_key)) = ? LIMIT 1`,
+                    [lic]
+                );
+                const ownerEmail = String(ownerRows[0]?.email || '').trim().toLowerCase();
+                const roleRows = await queryDB(
+                    `SELECT uuid FROM user_roles
+                      WHERE (email = ? OR email LIKE ?)
+                        AND (account_key = ? OR (account_key IS NULL AND account_email = ?))`,
+                    [`device:${devId}`, `device_cfg:${devId}:%`, lic, ownerEmail]
+                );
+                for (const r of roleRows) {
+                    await queryDB(
+                        `UPDATE user_roles
+                            SET deleted_at = CURRENT_TIMESTAMP,
+                                updated_at = CURRENT_TIMESTAMP,
+                                version = COALESCE(version, 0) + 1
+                          WHERE uuid = ?`,
+                        [r.uuid]
+                    );
+                    await queryDB(
+                        `INSERT INTO change_log (account_email, account_key, seq, table_name, row_uuid, op)
+                         SELECT ?, ?, COALESCE((SELECT MAX(seq) FROM change_log WHERE account_email = ?), 0) + 1,
+                                'user_roles', ?, 'delete'`,
+                        [ownerEmail, lic, ownerEmail, r.uuid]
+                    );
+                }
                 return res.status(200).json({ ok: true, unlinked_device_id: devId });
             }
         }
