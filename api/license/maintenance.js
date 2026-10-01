@@ -95,9 +95,12 @@ export async function handleRotateKey(req, res) {
         }
         const stmts = [
             { sql: `UPDATE licencias SET usado = 1, previous_license_key = ? WHERE license_key = ?`, args: [oldKey, newKey] },
-            // v49: DELETE previo anti-colisión de PK compuesta (license_key, device_id)
-            { sql: `DELETE FROM devices WHERE license_key = ? AND device_id IN (SELECT device_id FROM devices WHERE license_key = ?)`, args: [newKey, oldKey] },
-            { sql: `UPDATE devices SET license_key = ? WHERE license_key = ?`, args: [newKey, oldKey] },
+            // v49: DELETE previo anti-colisión de PK compuesta (license_key, device_id).
+            // Solo filas ACTIVAS: una fila revocada es la prueba de la
+            // desvinculación y no debe poder borrarse (si no, el equipo
+            // desvinculado pudiera volver a entrar como si nunca se hubiera ido).
+            { sql: `DELETE FROM devices WHERE license_key = ? AND revoked = 0 AND device_id IN (SELECT device_id FROM devices WHERE license_key = ? AND revoked = 0)`, args: [newKey, oldKey] },
+            { sql: `UPDATE devices SET license_key = ? WHERE license_key = ? AND revoked = 0`, args: [newKey, oldKey] },
             { sql: `UPDATE account_cursor SET account_key = ? WHERE account_key = ? OR account_email = ?`, args: [newKey, oldKey, String(user.email || '').toLowerCase()] },
             { sql: `UPDATE change_log SET account_key = ? WHERE account_key = ?`, args: [newKey, oldKey] },
             { sql: `UPDATE device_role_assignments SET account_key = ? WHERE account_key = ?`, args: [newKey, oldKey] },

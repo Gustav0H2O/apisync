@@ -546,19 +546,23 @@ if (licenseEmail) {
         const scope = `SELECT l2.license_key FROM licencias l2
                        JOIN clientes c2 ON l2.cliente_id = c2.id
                        WHERE LOWER(TRIM(c2.email)) = ?`;
+        // Solo se consolidan las filas ACTIVAS. Las revocadas NO se borran ni se
+        // re-apuntan: son la prueba de la desvinculación y, al desaparecer, un
+        // equipo revocado podía volver a entrar (el alta nueva creaba una fila
+        // revoked = 0 y esta consolidación borraba la revocada anterior).
         if (scopeEmail) {
             await queryDB(
                 `DELETE FROM devices
-                 WHERE device_id = ? AND (license_key = ? OR license_key IN (${scope}))
+                 WHERE device_id = ? AND revoked = 0 AND (license_key = ? OR license_key IN (${scope}))
                    AND rowid NOT IN (
                        SELECT rowid FROM devices
-                       WHERE device_id = ? AND (license_key = ? OR license_key IN (${scope}))
+                       WHERE device_id = ? AND revoked = 0 AND (license_key = ? OR license_key IN (${scope}))
                        ORDER BY (license_key = ?) DESC, last_seen DESC LIMIT 1)`,
                 [device_id, effectiveKey, scopeEmail, device_id, effectiveKey, scopeEmail, effectiveKey]);
         }
         await queryDB(
             `UPDATE devices SET license_key = ?, last_seen = CURRENT_TIMESTAMP
-             WHERE device_id = ? AND (license_key = ? OR license_key IN (${scope}))`,
+             WHERE device_id = ? AND revoked = 0 AND (license_key = ? OR license_key IN (${scope}))`,
             [effectiveKey, device_id, effectiveKey, scopeEmail || 'none']);
     }
     const token = jwt.sign({ licenseKey: effectiveKey, deviceId: device_id, email: scopeEmail || lic.email, isExpired: effectiveIsExpired }, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });

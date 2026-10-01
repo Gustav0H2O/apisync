@@ -85,50 +85,42 @@ export default async function handler(req, res) {
         }
 
         let accountEmail = isPlaceholder ? normalizedEmail : clientEmail;
-        let effectiveClienteId = Number(lic.cliente_id);
+        const replaceEmail =
+            isPlaceholder && normalizedEmail && !normalizedEmail.startsWith('placeholder-');
 
-        if (isPlaceholder && normalizedEmail && !normalizedEmail.startsWith('placeholder-')) {
-            // Renovación con clave nueva y correo que YA tiene cliente:
-            // `clientes.email` es UNIQUE, así que un UPDATE directo revienta
-            // con 500 y la renovación queda sin efecto. Se hace MERGE: la
-            // licencia se re-apunta al cliente real y el placeholder vacío se
-            // elimina (guardado: nunca borrar un cliente que aún tenga licencias).
+        // Cliente real que YA tiene el correo escrito (si lo hay). Se resuelve
+        // ANTES de tocar nada: hace falta para la regla del equipo revocado y
+        // para la del correo ya en uso.
+        let emailClienteId = null;
+        if (replaceEmail) {
             const [dupRows] = await connection.execute(
                 `SELECT id FROM clientes WHERE LOWER(TRIM(email)) = ? AND id != ? LIMIT 1`,
                 [normalizedEmail, lic.cliente_id]
             );
-            if (dupRows.length) {
-                effectiveClienteId = Number(dupRows[0].id);
-                await connection.execute(
-                    `UPDATE licencias SET cliente_id = ? WHERE id = ?`,
-                    [effectiveClienteId, lic.lic_id]
-                );
-                await connection.execute(
-                    `DELETE FROM clientes WHERE id = ? AND NOT EXISTS (
-                       SELECT 1 FROM licencias WHERE cliente_id = ? AND id != ?)`,
-                    [lic.cliente_id, lic.cliente_id, lic.cliente_id]
-                );
-            } else {
-                await connection.execute(
-                    `UPDATE clientes SET email = ? WHERE id = ?`,
-                    [normalizedEmail, lic.cliente_id]
-                );
-            }
-            accountEmail = normalizedEmail;
+            if (dupRows.length) emailClienteId = Number(dupRows[0].id);
         }
 
         // ── Reglas de identidad de la cuenta ────────────────────────────────
-        // El par (correo, licencia) identifica UNA cuenta, y sus equipos se
-        // agregan VINCULÁNDOSE desde uno ya autorizado. Un equipo que fue
-        // desvinculado queda fuera: no puede reactivarse por esta vía con la
-        // misma licencia ni con otra del mismo negocio; solo el administrador
-        // puede volver a autorizarlo (reactivación en Turso o vinculación).
+        // El par (correo, licencia) identifica UNA cuenta y sus equipos se
+        // agregan VINCULÁNDOSE desde uno ya autorizado. NINGUNA de estas reglas
+        // escribe en la BD: un rechazo no debe dejar efectos.
+        //
+        // (1) Un equipo desvinculado queda fuera: no puede reactivarse por esta
+        //     vía con la misma licencia ni con otra del mismo negocio; solo el
+        //     administrador puede volver a autorizarlo (reactivación en Turso o
+        //     vinculación). Se comprueba contra el cliente de la licencia Y
+        //     contra el dueño del correo escrito.
+        const revokedScope = [Number(lic.cliente_id)];
+        if (emailClienteId !== null && !revokedScope.includes(emailClienteId)) {
+            revokedScope.push(emailClienteId);
+        }
         const [wasRevoked] = await connection.execute(
             `SELECT 1 AS x FROM devices d
                JOIN licencias l ON l.license_key = d.license_key
-              WHERE l.cliente_id = ? AND d.device_id = ? AND d.revoked = 1
+              WHERE d.device_id = ? AND d.revoked = 1
+                AND l.cliente_id IN (${revokedScope.map(() => '?').join(', ')})
               LIMIT 1`,
-            [effectiveClienteId, device_id]
+            [device_id, ...revokedScope]
         );
         if (wasRevoked.length) {
             return res.status(409).json({
@@ -138,6 +130,53 @@ export default async function handler(req, res) {
                     + 'cuenta distinta.',
             });
         }
+
+        // (2) El correo escrito ya pertenece a otra cuenta. Fusionarlo es la
+        //     vía legítima de RENOVACIÓN (un equipo YA autorizado del negocio
+        //     activa su clave nueva), pero también el agujero por el que
+        //     cualquiera que sepa el correo ajeno + una clave sin usar entraba
+        //     a esa cuenta con todos sus datos. Solo se permite si quien activa
+        //     ya es un equipo autorizado de ese negocio.
+        let effectiveClienteId = Number(lic.cliente_id);
+        if (emailClienteId !== null) {
+            const [ownsRows] = await connection.execute(
+                `SELECT 1 AS x FROM devices d
+                   JOIN licencias l ON l.license_key = d.license_key
+                  WHERE l.cliente_id = ? AND d.device_id = ? AND d.revoked = 0
+                  LIMIT 1`,
+                [emailClienteId, device_id]
+            );
+            if (!ownsRows.length) {
+                return res.status(409).json({
+                    error: 'email_in_use',
+                    message: 'Ese correo ya está registrado en otra cuenta. '
+                        + 'Usa un correo distinto; si la cuenta es tuya, '
+                        + 'renueva desde un equipo ya autorizado o pide al '
+                        + 'administrador que vincule este.',
+                });
+            }
+            // Renovación: `clientes.email` es UNIQUE, así que un UPDATE directo
+            // reventaría con 500. La licencia se re-apunta al cliente real y el
+            // placeholder vacío se elimina (guardado: nunca borrar un cliente
+            // que aún tenga licencias).
+            effectiveClienteId = emailClienteId;
+            await connection.execute(
+                `UPDATE licencias SET cliente_id = ? WHERE id = ?`,
+                [effectiveClienteId, lic.lic_id]
+            );
+            await connection.execute(
+                `DELETE FROM clientes WHERE id = ? AND NOT EXISTS (
+                   SELECT 1 FROM licencias WHERE cliente_id = ? AND id != ?)`,
+                [lic.cliente_id, lic.cliente_id, lic.cliente_id]
+            );
+        } else if (replaceEmail) {
+            // Clave nueva + correo libre: el cliente provisional toma el correo.
+            await connection.execute(
+                `UPDATE clientes SET email = ? WHERE id = ?`,
+                [normalizedEmail, lic.cliente_id]
+            );
+        }
+        if (replaceEmail) accountEmail = normalizedEmail;
 
         if (!usado) {
             // Ganador atómico de la activación
