@@ -520,6 +520,7 @@ export default async function handler(req, res) {
             // Best-effort: nunca rompe el flujo del sync legacy.
             try {
                 await sendToLicense(connection, user.licenseKey, {
+                    accountEmail: user.email,
                     excludeDeviceId: user.deviceId,
                     data: { type: 'sync' },
                 });

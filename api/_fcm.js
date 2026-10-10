@@ -210,16 +210,28 @@ export async function sendToTokens(tokens, { notification, data, priority = 'hig
  * excluyendo el emisor. Limpia de la BD los tokens que FCM reporta muertos.
  * Tolerante: si la columna fcm_token no existe todavía, devuelve {sent:0}.
  */
-export async function sendToLicense(connection, licenseKey, { excludeDeviceId, notification, data } = {}) {
-    if (!licenseKey || !fcmConfigured()) return { sent: 0 };
+export async function sendToLicense(connection, licenseKey, { accountEmail, excludeDeviceId, notification, data } = {}) {
+    if ((!licenseKey && !accountEmail) || !fcmConfigured()) return { sent: 0 };
 
     let rows;
     try {
-        [rows] = await connection.execute(
-            `SELECT device_id, fcm_token FROM devices
-             WHERE license_key = ? AND revoked = 0 AND fcm_token IS NOT NULL`,
-            [licenseKey]
-        );
+        if (accountEmail) {
+            [rows] = await connection.execute(
+                `SELECT device_id, fcm_token FROM devices
+                 WHERE revoked = 0 AND fcm_token IS NOT NULL
+                   AND (license_key = ? OR license_key IN (
+                       SELECT license_key FROM licencias
+                       WHERE cliente_id IN (SELECT id FROM clientes WHERE email = ?)
+                   ))`,
+                [licenseKey || '', accountEmail]
+            );
+        } else {
+            [rows] = await connection.execute(
+                `SELECT device_id, fcm_token FROM devices
+                 WHERE license_key = ? AND revoked = 0 AND fcm_token IS NOT NULL`,
+                [licenseKey]
+            );
+        }
     } catch (e) {
         console.warn('[FCM] No se pudieron leer tokens (¿migración pendiente?):', e.message);
         return { sent: 0 };

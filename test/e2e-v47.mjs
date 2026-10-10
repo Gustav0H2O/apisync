@@ -8,6 +8,7 @@ import { ensureMirrorTables } from '../api/sync/_ensure.js';
 import { TABLE_SPECS } from '../api/sync/_tables.js';
 
 if (!process.env.JWT_SECRET) process.env.JWT_SECRET = 'e2e-test-secret';
+if (!process.env.TURSO_URL) process.env.TURSO_URL = 'file::memory:';
 
 const EMAIL = 'test@e2e.dev';
 const DEVICE = 'dev-e2e-1';
@@ -37,7 +38,9 @@ function assert(cond, msg) {
 
 const db = getConnection();
 await ensureMirrorTables(db, Object.keys(TABLE_SPECS));
-await db.execute('CREATE TABLE IF NOT EXISTS devices(device_id TEXT PRIMARY KEY, revoked INTEGER, license_key TEXT)', []);
+await db.execute('CREATE TABLE IF NOT EXISTS devices(device_id TEXT PRIMARY KEY, revoked INTEGER, license_key TEXT, revoked_at TEXT)', []);
+await db.execute('CREATE TABLE IF NOT EXISTS clientes(id INTEGER PRIMARY KEY, email TEXT, profile_change_limit INTEGER, profile_change_count INTEGER)', []);
+await db.execute('CREATE TABLE IF NOT EXISTS licencias(id INTEGER PRIMARY KEY, cliente_id INTEGER, license_key TEXT)', []);
 
 await db.execute('DELETE FROM change_log WHERE account_email IN (?, ?)', [EMAIL, 'otro@e2e.dev']);
 await db.execute('DELETE FROM account_cursor WHERE account_email IN (?, ?)', [EMAIL, 'otro@e2e.dev']);

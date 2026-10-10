@@ -1,5 +1,8 @@
 {
   "version": 2,
+  "env": {
+    "NODE_OPTIONS": "--no-deprecation"
+  },
   "rewrites": [
     { "source": "/api/pairing/:action", "destination": "/api/auth/token.js?action=:action" },
     { "source": "/api/proxy", "destination": "/api/db.js" },

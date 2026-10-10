@@ -3,6 +3,13 @@ import { getConnection } from './_db.js';
 
 export { applyCors } from './_cors.js';
 
+// Silenciar advertencia DEP0169 (url.parse) generada por bridges o dependencias internas en Node 20/22
+if (typeof process !== 'undefined' && process.on) {
+    process.on('warning', (warning) => {
+        if (warning && warning.code === 'DEP0169') return;
+    });
+}
+
 /**
  * Parsea una fecha de vencimiento de BD respetando la zona horaria del negocio
  * (Venezuela / UTC-4 por defecto cuando no se indica offset).

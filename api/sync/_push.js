@@ -161,14 +161,27 @@ export default async function handler(req, res) {
                 }
                 const existing = existingByUuid.get(uuid) || null;
 
-                // Alcance de cuenta v49: canónico account_key, fallback email (clientes viejos).
-                if (existing && spec.accountScoped && (existing.account_key || existing.account_email) &&
-                    (existing.account_key ? existing.account_key !== accountKey : existing.account_email !== user.email)) {
+                // Alcance de cuenta v49: la identidad estable de la cuenta es el correo (account_email).
+                // Si el correo coincide, ES la misma cuenta (incluso al renovar o rotar licencias).
+                // Si la fila no tiene email, se contrasta contra la licencia (account_key).
+                const rowEmail = (existing?.account_email || '').trim().toLowerCase();
+                const curEmail = (user.email || '').trim().toLowerCase();
+                const rowKey = (existing?.account_key || '').trim().toUpperCase();
+                const curKey = (accountKey || '').trim().toUpperCase();
+
+                let isSameAccount = false;
+                if (rowEmail && curEmail) {
+                    isSameAccount = (rowEmail === curEmail);
+                } else if (rowKey && curKey) {
+                    isSameAccount = (rowKey === curKey);
+                }
+
+                if (existing && spec.accountScoped && (rowEmail || rowKey) && !isSameAccount) {
                     rejected.push({ table, uuid, reason: 'forbidden' });
                     continue;
                 }
-                if (existing && spec.parent && existing.parent_account &&
-                    existing.parent_account !== user.email) {
+                const parentEmail = (existing?.parent_account || '').trim().toLowerCase();
+                if (existing && spec.parent && parentEmail && parentEmail !== curEmail) {
                     rejected.push({ table, uuid, reason: 'forbidden' });
                     continue;
                 }
@@ -243,9 +256,9 @@ export default async function handler(req, res) {
                         const where = spec.businessKey.cols.map(c => `${c} = ?`).join(' AND ');
                         const [found] = await connection.execute(
                             `SELECT * FROM ${spec.remote}
-                             WHERE (account_key = ? OR (account_key IS NULL AND account_email = ?)) AND ${where} AND deleted_at IS NULL
+                             WHERE (account_email = ? OR account_key = ?) AND ${where} AND deleted_at IS NULL
                              ORDER BY version DESC LIMIT 1`,
-                            [accountKey, user.email, ...keyVals]
+                            [user.email, accountKey, ...keyVals]
                         );
                         canonical = found[0] || null;
                     }
@@ -334,6 +347,7 @@ export default async function handler(req, res) {
             profileResult?.status === 'change_limit') {
             try {
                 await sendToLicense(connection, user.licenseKey, {
+                    accountEmail: user.email,
                     excludeDeviceId: user.deviceId,
                     data: { type: 'sync', seq: String(Number(seqRows[0]?.seq || 0)) },
                 });
@@ -425,7 +439,7 @@ function upsertStatement(spec, email, row, uuid, version, now, physicalCols = nu
     vals.push(version, now, row.deleted_at === undefined ? null : row.deleted_at);
 
     const conflictTarget = spec.conflictTarget || '(uuid)';
-    const updatable = cols.filter(c => c !== 'uuid' && c !== 'account_email' && c !== 'account_key');
+    const updatable = cols.filter(c => c !== 'uuid' && c !== 'account_email');
     let sql = `INSERT INTO ${spec.remote} (${cols.join(', ')})
                VALUES (${cols.map(() => '?').join(', ')})
                ON CONFLICT ${conflictTarget} DO UPDATE SET

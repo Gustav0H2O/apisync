@@ -28,6 +28,10 @@ export default async function handler(req, res) {
         const tokenEmail = String(user.email || '').trim().toLowerCase();
         const tokenLicense = String(user.licenseKey || '').trim().toUpperCase();
 
+        if (reqEmail && tokenEmail && !tokenEmail.startsWith('placeholder-') && reqEmail !== tokenEmail) {
+            return res.status(409).json({ error: 'email_mismatch', message: 'El correo solicitado no coincide con la sesión del token' });
+        }
+
         let [rows] = await connection.execute(
             `SELECT l.id AS lic_id, l.license_key, l.tipo, l.usado, c.email AS client_email,
                     COALESCE(l.max_devices_allowed, 2) AS max_devices_allowed,
