@@ -1,4 +1,4 @@
-﻿// Test de Sincronizacion en Tiempo Real y Esquema Dinamico (Escalabilidad Horizontal y Vertical)
+// Test de Sincronizacion en Tiempo Real y Esquema Dinamico (Escalabilidad Horizontal y Vertical)
 import jwt from 'jsonwebtoken';
 import push from '../api/sync/_push.js';
 import changes from '../api/sync/_changes.js';
@@ -40,14 +40,21 @@ function assert(cond, msg) {
 
 console.log('--- Iniciando Test de Tiempo Real y Escalabilidad Dinamica ---');
 const db = getConnection();
-await ensureMirrorTables(db, Object.keys(TABLE_SPECS));
-await db.execute('CREATE TABLE IF NOT EXISTS devices(device_id TEXT PRIMARY KEY, revoked INTEGER, license_key TEXT)', []);
-await db.execute('INSERT OR REPLACE INTO devices(device_id, revoked, license_key) VALUES (?, 0, ?)', [DEVICE, LIC]);
 
 // Limpieza inicial
 await db.execute('DELETE FROM change_log WHERE account_email = ?', [EMAIL]);
 await db.execute('DELETE FROM account_cursor WHERE account_email = ?', [EMAIL]);
 await db.execute('DELETE FROM sync_clients WHERE account_email = ?', [EMAIL]);
+await db.execute('DELETE FROM devices WHERE device_id = ?', [DEVICE]);
+await db.execute('DELETE FROM licencias WHERE license_key = ?', [LIC]);
+await db.execute('DELETE FROM clientes WHERE email = ?', [EMAIL]);
+
+const [cliRes] = await db.execute('INSERT INTO clientes (email, business_name, rif) VALUES (?, ?, ?)', [EMAIL, 'Fleet Live Corp', 'J-00000000-0']);
+const clientId = cliRes.insertId;
+await db.execute('INSERT INTO licencias (cliente_id, license_key, tipo) VALUES (?, ?, ?)', [clientId, LIC, 'UNIQUE']);
+await db.execute('INSERT INTO devices (device_id, license_key, name, revoked) VALUES (?, ?, ?, 0)', [DEVICE, LIC, 'Fleet Live Test Device']);
+
+await ensureMirrorTables(db, Object.keys(TABLE_SPECS));
 
 // 1. Verificacion de adicion dinamica de columnas (Escalabilidad Horizontal y Vertical)
 console.log('\n[1] Probando migracion dinamica de columnas sin downtime...');
@@ -138,6 +145,14 @@ const wakeElapsed = Date.now() - tWakeStart;
 
 assert(pollResult.payload.seq > currentSeq, 'Long-poll fue despertado por el nuevo seq (' + pollResult.payload.seq + ' > ' + currentSeq + ')');
 console.log('Long-poll despertado reactivamente en ' + wakeElapsed + 'ms');
+
+// Limpieza final
+await db.execute('DELETE FROM change_log WHERE account_email = ?', [EMAIL]);
+await db.execute('DELETE FROM account_cursor WHERE account_email = ?', [EMAIL]);
+await db.execute('DELETE FROM sync_clients WHERE account_email = ?', [EMAIL]);
+await db.execute('DELETE FROM devices WHERE device_id = ?', [DEVICE]);
+await db.execute('DELETE FROM licencias WHERE license_key = ?', [LIC]);
+await db.execute('DELETE FROM clientes WHERE email = ?', [EMAIL]);
 
 console.log('\n======================================================');
 console.log('TODOS LOS TESTS DE ESCALABILIDAD Y TIEMPO REAL: OK');

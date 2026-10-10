@@ -652,10 +652,17 @@ export default async function handler(req, res) {
 
         const globalChecksum = parseInt(checksumResults[0]?.global_checksum || 0);
 
+        const [seqRows] = await connection.execute(
+            `SELECT COALESCE((SELECT seq FROM account_cursor WHERE account_email = ?), 0) AS seq`,
+            [user.email]
+        );
+        const currentSeq = Number(seqRows[0]?.seq || 0);
+
         // ─── CERRAR CONEXIÓN ANTES DE RESPONDER ───────────────────────────
         connection.destroy();
 
         return res.status(200).json({
+            seq: currentSeq,
             clients: remoteClients,
             invoices: remoteInvoices,
             suppliers: remoteSuppliers,

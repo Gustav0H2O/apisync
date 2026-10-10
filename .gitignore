@@ -1,4 +1,4 @@
-﻿# Herramientas locales de una sola vez + respaldos de la base de produccion
+# Herramientas locales de una sola vez + respaldos de la base de produccion
 # (NUNCA van al repo: los respaldos contienen datos del cliente)
 q.mjs
 qfile.mjs
@@ -24,4 +24,5 @@ licencias_generadas.txt
 node_modules/
 .env
 .env.*
-
+firebase-service-account.json
+*.db
