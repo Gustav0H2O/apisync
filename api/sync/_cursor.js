@@ -1,5 +1,6 @@
 import { getConnection } from '../_db.js';
 import { verifyToken, isDeviceRevoked, requireJwtSecret, applyCors } from '../_helpers.js';
+import { syncBus } from './_bus.js';
 
 /**
  * GET /api/sync/cursor?since=<seq>&wait=<sec>  (auth JWT)
@@ -74,15 +75,28 @@ export default async function handler(req, res) {
 
         let state = await fetchCursorState();
 
-        // Long-polling reactivo: si no hay cambios y se solicitó wait, esperar
-        // hasta que ocurra un push o expire el tiempo de espera.
+        // Long-polling reactivo de ultra-baja latencia: despierta inmediatamente
+        // vía syncBus en memoria (0ms) o por sondeo de 200ms ante mutaciones de la cuenta.
         if (since !== null && maxWaitMs > 0 && state.seq <= since) {
-            while (Date.now() - startTime < maxWaitMs) {
-                await new Promise(r => setTimeout(r, 600));
-                state = await fetchCursorState();
-                if (state.seq > since) {
-                    break; // Cambio detectado en tiempo real
+            const emailKey = String(user.email || '').trim().toLowerCase();
+            let busTriggered = false;
+            const onLocalChange = () => { busTriggered = true; };
+            syncBus.once('change:' + emailKey, onLocalChange);
+
+            try {
+                while (Date.now() - startTime < maxWaitMs) {
+                    if (busTriggered) {
+                        state = await fetchCursorState();
+                        break;
+                    }
+                    await new Promise(r => setTimeout(r, 200));
+                    state = await fetchCursorState();
+                    if (state.seq > since || busTriggered) {
+                        break; // Cambio detectado en tiempo real
+                    }
                 }
+            } finally {
+                syncBus.removeListener('change:' + emailKey, onLocalChange);
             }
         }
 

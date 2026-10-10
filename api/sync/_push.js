@@ -9,6 +9,7 @@ import { ensureMirrorTables, getTableColumns } from './_ensure.js';
 import { resolveSpec, physicalColumns, writableColumns } from './_registry.js';
 import { buildProfileUpdate, mergeProfileConfig } from './_profile.js';
 import { sendToLicense } from '../_fcm.js';
+import { syncBus } from './_bus.js';
 
 // undefined -> NULL antes de enviar a Turso (libsql no acepta undefined).
 const mapP = (arr) => arr.map(v => v === undefined ? null : v);
@@ -338,6 +339,12 @@ export default async function handler(req, res) {
             'SELECT COALESCE((SELECT seq FROM account_cursor WHERE account_email = ?), 0) AS seq',
             [user.email]
         );
+        const currentSeq = Number(seqRows[0]?.seq || 0);
+
+        // Notificación instantánea en memoria para peticiones long-polling activas (0ms de latencia)
+        if (applied.length > 0 || profileResult?.status === 'applied') {
+            syncBus.emit('change:' + String(user.email).trim().toLowerCase(), currentSeq);
+        }
 
         // Tiempo real: si algo cambió, despertar a los OTROS dispositivos de la
         // cuenta con un push SILENCIOSO (solo-datos) para que sincronicen aunque
