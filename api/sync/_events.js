@@ -29,6 +29,7 @@ export default async function handler(req, res) {
     });
 
     const emailKey = String(user.email || '').trim().toLowerCase();
+    let lastSeq = 0;
 
     // 1. Enviar evento inicial con el cursor vigente de la cuenta
     try {
@@ -37,30 +38,58 @@ export default async function handler(req, res) {
             'SELECT COALESCE((SELECT seq FROM account_cursor WHERE account_email = ?), 0) AS seq',
             [user.email]
         );
-        const currentSeq = Number(rows[0]?.seq || 0);
-        res.write(`data: ${JSON.stringify({ type: 'init', seq: currentSeq })}\n\n`);
+        lastSeq = Number(rows[0]?.seq || 0);
+        res.write(`data: ${JSON.stringify({ type: 'init', seq: lastSeq })}\n\n`);
     } catch (e) {
         res.write(`data: ${JSON.stringify({ type: 'init', seq: 0 })}\n\n`);
     }
 
-    // 2. Suscribirse al canal reactivo en memoria de esta cuenta
+    // 2. Suscribirse al canal reactivo en memoria de esta cuenta (0ms de latencia en la misma instancia)
     const onChange = (seq) => {
         try {
-            res.write(`data: ${JSON.stringify({ type: 'sync', seq: Number(seq || 0) })}\n\n`);
+            const num = Number(seq || 0);
+            if (num > lastSeq) {
+                lastSeq = num;
+                res.write(`data: ${JSON.stringify({ type: 'sync', seq: num })}\n\n`);
+            }
         } catch (_) {}
     };
 
     syncBus.on('change:' + emailKey, onChange);
 
-    // 3. Heartbeat cada 15 segundos para evitar que proxies o Vercel cierren la conexión
+    // 3. Puente multi-instancia Serverless (Vercel):
+    // Verifica si el cursor avanzó en Turso por pushes recibidos en otros contenedores Lambda
+    let isChecking = false;
+    const bridgeTimer = setInterval(async () => {
+        if (isChecking) return;
+        isChecking = true;
+        try {
+            const connection = getConnection();
+            const [rows] = await connection.execute(
+                'SELECT COALESCE((SELECT seq FROM account_cursor WHERE account_email = ?), 0) AS seq',
+                [user.email]
+            );
+            const dbSeq = Number(rows[0]?.seq || 0);
+            if (dbSeq > lastSeq) {
+                lastSeq = dbSeq;
+                res.write(`data: ${JSON.stringify({ type: 'sync', seq: dbSeq })}\n\n`);
+            }
+        } catch (_) {
+        } finally {
+            isChecking = false;
+        }
+    }, 1200);
+
+    // 4. Heartbeat cada 15 segundos para evitar que proxies o Vercel cierren la conexión
     const keepAliveTimer = setInterval(() => {
         try {
             res.write(': keep-alive\n\n');
         } catch (_) {}
     }, 15000);
 
-    // 4. Limpieza de memoria al desconectar el cliente
+    // 5. Limpieza de memoria al desconectar el cliente
     req.on('close', () => {
+        clearInterval(bridgeTimer);
         clearInterval(keepAliveTimer);
         syncBus.removeListener('change:' + emailKey, onChange);
     });

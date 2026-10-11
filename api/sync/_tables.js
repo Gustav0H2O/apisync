@@ -7,13 +7,13 @@ export const TABLE_SPECS = {
     clients: {
         remote: 'sync_clients',
         accountScoped: true,
-        cols: ['name', 'phone', 'rif', 'address', 'discount_rate'],
+        cols: ['name', 'phone', 'rif', 'address', 'discount_rate', 'trade_name', 'is_special_taxpayer'],
         businessKey: { cols: ['rif'], notEmpty: 'rif', ignoreValues: ['v-0', 'j-0', 'v0', 'j0'] },
     },
     suppliers: {
         remote: 'sync_suppliers',
         accountScoped: true,
-        cols: ['name', 'rif', 'phone', 'email', 'address', 'contact_person'],
+        cols: ['name', 'rif', 'phone', 'email', 'address', 'contact_person', 'retention_percentage'],
         businessKey: { cols: ['rif'], notEmpty: 'rif', ignoreValues: ['v-0', 'j-0', 'v0', 'j0'] },
     },
     categories: {
@@ -52,6 +52,7 @@ export const TABLE_SPECS = {
             'tax_base_general', 'tax_base_reduced', 'tax_base_additional',
             'tax_base_exempt', 'applied_retention_iva', 'applied_retention_islr',
             'emission_source',
+            'client_trade_name', 'is_client_special_taxpayer',
         ],
         businessKey: { cols: ['document_type', 'number'], notEmpty: 'number' },
         sealed: true,
@@ -110,6 +111,11 @@ export const TABLE_SPECS = {
         accountScoped: true,
         cols: ['email', 'role'],
     },
+    device_role_assignments: {
+        remote: 'sync_device_role_assignments',
+        accountScoped: true,
+        cols: ['device_id', 'role', 'terminal_prefix', 'terminal_name'],
+    },
 };
 
 // Grafo de dependencias relacionales para resolver el orden de inserción dinámicamente
@@ -166,7 +172,7 @@ export function resolveTableOrder(incomingTables) {
 export const TABLE_ORDER = [
     'clients', 'suppliers', 'categories', 'products', 'invoices',
     'invoice_items', 'stock_movements', 'audit_logs', 'expenses',
-    'fiscal_transmissions', 'user_roles', 'taxes',
+    'fiscal_transmissions', 'user_roles', 'taxes', 'device_role_assignments',
 ];
 
 export function toNumber(value, fallback = 0) {
