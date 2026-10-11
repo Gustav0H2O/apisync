@@ -2,6 +2,7 @@ import changes from './sync/_changes.js';
 import cursor from './sync/_cursor.js';
 import pull from './sync/_pull.js';
 import push from './sync/_push.js';
+import events from './sync/_events.js';
 import { applyCors } from './_cors.js';
 
 export default async function handler(req, res) {
@@ -11,5 +12,6 @@ export default async function handler(req, res) {
     if (action === 'cursor') return cursor(req, res);
     if (action === 'pull') return pull(req, res);
     if (action === 'push') return push(req, res);
+    if (action === 'events' || action === 'stream') return events(req, res);
     return res.status(404).json({error: `Acción sync '${action}' no soportada.`});
 }

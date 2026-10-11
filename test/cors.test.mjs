@@ -13,6 +13,7 @@ import pinVerifyHandler from '../api/auth/pin-verify.js';
 import changesHandler from '../api/sync/_changes.js';
 import cursorHandler from '../api/sync/_cursor.js';
 import pushHandler from '../api/sync/_push.js';
+import eventsHandler from '../api/sync/_events.js';
 
 function createMockReqRes({ method = 'GET', origin = 'http://localhost:54321', headers = {}, body = null, query = {} } = {}) {
     const req = {
@@ -92,6 +93,7 @@ async function runTests() {
         { name: 'sync_changes', handler: changesHandler },
         { name: 'sync_cursor', handler: cursorHandler },
         { name: 'sync_push', handler: pushHandler },
+        { name: 'sync_events', handler: eventsHandler },
     ];
 
     for (const { name, handler } of handlers) {
