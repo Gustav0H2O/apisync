@@ -36,6 +36,10 @@ import Busboy from 'busboy';
  */
 export default async function handler(req, res) {
     if (applyCors(req, res)) return;
+    if (req.query?.action === 'events' || req.query?.action === 'stream') {
+        const { default: eventsHandler } = await import('./sync/_events.js');
+        return eventsHandler(req, res);
+    }
     if (req.method !== 'POST') return res.status(405).end();
 
     // Validación de tamaño de payload (10MB) para prevenir ataques DoS o payloads corruptos gigantes

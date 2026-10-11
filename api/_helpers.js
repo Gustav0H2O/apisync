@@ -52,12 +52,14 @@ export function requireJwtSecret(res) {
 }
 
 export function verifyToken(req, options = {}) {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return null;
+    let token = null;
+    const authHeader = req.headers?.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        token = authHeader.split(' ')[1];
+    } else if (req.query?.token) {
+        token = req.query.token;
     }
-
-    const token = authHeader.split(' ')[1];
+    if (!token) return null;
     try {
         return jwt.verify(token, process.env.JWT_SECRET || JWT_SECRET, options);
     } catch (err) {
