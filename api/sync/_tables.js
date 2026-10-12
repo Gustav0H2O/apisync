@@ -30,6 +30,7 @@ export const TABLE_SPECS = {
             'wholesale_price', 'wholesale_quantity', 'is_on_sale',
             'promo_price', 'promo_quantity', 'promo_start_date', 'promo_end_date',
             'promo_rules', 'promo_clients', 'tax_type', 'type', 'is_active',
+            'purchase_price',
         ],
         // Identidad de negocio: mismo código creado offline en dos dispositivos
         // se fusiona sobre la fila canónica en vez de duplicarse.
@@ -99,6 +100,8 @@ export const TABLE_SPECS = {
             'tax_base_general', 'tax_base_reduced', 'tax_base_additional',
             'tax_base_exempt', 'tax_general', 'tax_reduced', 'tax_additional',
             'applied_retention_iva', 'applied_retention_islr', 'total',
+            'items_json', 'payment_method', 'observations', 'working_currency',
+            'exchange_rate', 'target_warehouse_id', 'status',
         ],
     },
     fiscal_transmissions: {

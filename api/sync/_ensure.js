@@ -46,6 +46,7 @@ export const TABLE_SCHEMAS = {
         promo_start_date: 'TEXT', promo_end_date: 'TEXT',
         promo_rules: 'TEXT', promo_clients: 'TEXT',
         tax_type: 'TEXT', type: 'TEXT', is_active: 'INTEGER',
+        purchase_price: 'REAL',
     },
     invoices: {
         number: 'TEXT', client_uuid: 'TEXT', client_name: 'TEXT',
@@ -94,6 +95,9 @@ export const TABLE_SCHEMAS = {
         tax_base_exempt: 'REAL', tax_general: 'REAL', tax_reduced: 'REAL',
         tax_additional: 'REAL', applied_retention_iva: 'REAL',
         applied_retention_islr: 'REAL', total: 'REAL',
+        items_json: 'TEXT', payment_method: 'TEXT', observations: 'TEXT',
+        working_currency: 'TEXT', exchange_rate: 'REAL',
+        target_warehouse_id: 'INTEGER', status: 'TEXT',
     },
     fiscal_transmissions: {
         invoice_uuid: 'TEXT', sent_at: 'TEXT', status: 'TEXT',
