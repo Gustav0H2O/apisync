@@ -674,9 +674,12 @@ export default async function handler(req, res) {
                 (SELECT COALESCE(SUM(version), 0) FROM sync_products WHERE account_email = ?) + 
                 (SELECT COALESCE(SUM(version), 0) FROM sync_categories WHERE account_email = ?) + 
                 (SELECT COALESCE(SUM(version), 0) FROM sync_stock_movements WHERE account_email = ?) +
-                (SELECT COALESCE(SUM(version), 0) FROM sync_audit_logs WHERE account_email = ?)
+                (SELECT COALESCE(SUM(version), 0) FROM sync_audit_logs WHERE account_email = ?) +
+                (SELECT COALESCE(SUM(version), 0) FROM sync_expenses WHERE account_email = ?) +
+                (SELECT COALESCE(SUM(version), 0) FROM sync_warehouses WHERE account_email = ?) +
+                (SELECT COALESCE(SUM(version), 0) FROM sync_transfers WHERE account_email = ?)
             ) as global_checksum`,
-            [user.email, user.email, user.email, user.email, user.email, user.email, user.email, user.email]
+            [user.email, user.email, user.email, user.email, user.email, user.email, user.email, user.email, user.email, user.email, user.email]
         );
 
         const globalChecksum = parseInt(checksumResults[0]?.global_checksum || 0);
@@ -703,6 +706,8 @@ export default async function handler(req, res) {
             expenses: simplePulls.expenses,
             fiscal_transmissions: simplePulls.fiscal_transmissions,
             user_roles: simplePulls.user_roles,
+            warehouses: simplePulls.warehouses || [],
+            transfers: simplePulls.transfers || [],
             profile: profileResponse,
             profile_status: profileStatus,
             notifications: notifications,
