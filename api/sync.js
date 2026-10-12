@@ -379,16 +379,18 @@ export default async function handler(req, res) {
             const rows = Array.isArray(push[tableName]) ? push[tableName] : [];
             for (const item of rows) {
                 if (!item || !item.uuid) continue;
+                if (tableName === 'user_roles') {
+                    if (!item.email) item.email = (user.email || 'user@sync.local').trim().toLowerCase();
+                    if (!item.role) item.role = 'cajero';
+                    else item.role = normalizeRole(item.role);
+                }
                 // Solo las columnas que el cliente envió y que existen en Turso.
                 const cols = spec.cols.filter((c) => item[c] !== undefined);
                 if (!cols.length) continue;
                 const allCols = ['uuid', 'account_email', ...cols, 'deleted_at', 'version', 'updated_at'];
                 const updatable = [...cols, 'deleted_at', 'updated_at', 'version'];
                 const conflictTarget = spec.conflictTarget || '(uuid)';
-                // v49r3: normalizar roles (supervisor/alias) para no violar el
-                // CHECK de user_roles y tumbar el batch atómico completo.
-                const colVals = cols.map(c =>
-                    (tableName === 'user_roles' && c === 'role') ? normalizeRole(item[c]) : item[c]);
+                const colVals = cols.map(c => item[c]);
                 batchStatements.push({
                     sql: `INSERT INTO ${spec.remote} (${allCols.join(', ')})
                           VALUES (${allCols.map(() => '?').join(', ')})

@@ -157,10 +157,49 @@ export default async function handler(req, res) {
                 if (!uuid) continue;
                 // v49r3: normalizar roles para no violar el CHECK de user_roles
                 // y tumbar el batch atómico completo (p. ej. 'supervisor').
-                if (table === 'user_roles' && row.role !== undefined) {
-                    row.role = normalizeRole(row.role);
+                if (table === 'user_roles') {
+                    if (row.role !== undefined) {
+                        row.role = normalizeRole(row.role);
+                    }
                 }
                 const existing = existingByUuid.get(uuid) || null;
+
+                // Robustez contra restricciones NOT NULL de Turso:
+                if (existing) {
+                    // Si la fila entrante es una lápida (tombstone) o carece de ciertas columnas,
+                    // heredar los valores de la fila existente para que el INSERT / ON CONFLICT no falle.
+                    for (const col of Object.keys(existing)) {
+                        if (row[col] === undefined || row[col] === null) {
+                            row[col] = existing[col];
+                        }
+                    }
+                } else if (row.deleted_at) {
+                    // Si la fila ya fue borrada físicamente por el cliente y ni siquiera existe en Turso,
+                    // no insertar un fantasma con campos NULL para evitar violar restricciones NOT NULL o FK.
+                    applied.push({ table, uuid, version: Math.max(incomingVersion, 1) });
+                    continue;
+                } else {
+                    // Fila nueva: garantizar valores válidos en columnas NOT NULL habituales
+                    if (table === 'user_roles') {
+                        if (!row.email) row.email = (user.email || 'user@sync.local').trim().toLowerCase();
+                        if (!row.role) row.role = 'cajero';
+                        else row.role = normalizeRole(row.role);
+                    } else if (table === 'clients') {
+                        if (!row.name) row.name = 'Cliente sin nombre';
+                    } else if (table === 'products') {
+                        if (!row.name) row.name = 'Producto sin nombre';
+                        if (!row.code) row.code = 'PRD-' + uuid.slice(0, 8);
+                    } else if (table === 'suppliers') {
+                        if (!row.name) row.name = 'Proveedor';
+                    } else if (table === 'invoices') {
+                        if (!row.number) row.number = 'FAC-' + uuid.slice(0, 8);
+                    } else if (table === 'warehouses') {
+                        if (!row.name) row.name = 'Depósito';
+                        if (!row.code) row.code = 'DEP-' + uuid.slice(0, 6);
+                    } else if (table === 'transfers') {
+                        if (!row.transfer_number) row.transfer_number = 'TRS-' + uuid.slice(0, 6);
+                    }
+                }
 
                 // Alcance de cuenta v49: la identidad estable de la cuenta es el correo (account_email).
                 // Si el correo coincide, ES la misma cuenta (incluso al renovar o rotar licencias).
