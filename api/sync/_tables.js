@@ -116,6 +116,16 @@ export const TABLE_SPECS = {
         accountScoped: true,
         cols: ['device_id', 'role', 'terminal_prefix', 'terminal_name'],
     },
+    warehouses: {
+        remote: 'sync_warehouses',
+        accountScoped: true,
+        cols: ['code', 'name', 'description', 'is_default', 'allow_sale', 'is_active', 'created_at'],
+    },
+    transfers: {
+        remote: 'sync_transfers',
+        accountScoped: true,
+        cols: ['transfer_number', 'from_warehouse_id', 'to_warehouse_id', 'date', 'reason', 'observations', 'items_json', 'status', 'created_at'],
+    },
 };
 
 // Grafo de dependencias relacionales para resolver el orden de inserción dinámicamente
@@ -124,6 +134,7 @@ export const DEPENDENCY_GRAPH = {
     invoice_items: ['invoices'],
     stock_movements: ['products'],
     fiscal_transmissions: ['invoices'],
+    transfers: ['warehouses'],
 };
 
 // Reglas canónicas del núcleo: seguridad, inmutabilidad SENIAT y deduplicación de negocio.
@@ -173,6 +184,7 @@ export const TABLE_ORDER = [
     'clients', 'suppliers', 'categories', 'products', 'invoices',
     'invoice_items', 'stock_movements', 'audit_logs', 'expenses',
     'fiscal_transmissions', 'user_roles', 'taxes', 'device_role_assignments',
+    'warehouses', 'transfers',
 ];
 
 export function toNumber(value, fallback = 0) {

@@ -99,7 +99,7 @@ export default async function handler(req, res) {
     const { clients = [], invoices = [], profile = null, products = [], suppliers = [], categories = [], stock_movements = [], audit_logs = [] } = push;
     // v48: tablas que se escapaban del flujo legacy (el bootstrap/full-push no
     // podía repoblarlas y un dispositivo nuevo no las recibía en el snapshot).
-    const simpleTables = ['taxes', 'expenses', 'fiscal_transmissions', 'user_roles'];
+    const simpleTables = ['taxes', 'expenses', 'fiscal_transmissions', 'user_roles', 'warehouses', 'transfers'];
 
 
     let connection;

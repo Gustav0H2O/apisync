@@ -102,6 +102,17 @@ export const TABLE_SCHEMAS = {
     },
     user_roles: { email: 'TEXT', role: 'TEXT', account_key: 'TEXT' },
     device_role_assignments: { account_key: 'TEXT', device_id: 'TEXT', role: 'TEXT', terminal_prefix: 'TEXT', terminal_name: 'TEXT' },
+    warehouses: {
+        code: 'TEXT', name: 'TEXT', description: 'TEXT',
+        is_default: 'INTEGER', allow_sale: 'INTEGER', is_active: 'INTEGER',
+        created_at: 'TEXT',
+    },
+    transfers: {
+        transfer_number: 'TEXT', from_warehouse_id: 'INTEGER',
+        to_warehouse_id: 'INTEGER', date: 'TEXT', reason: 'TEXT',
+        observations: 'TEXT', items_json: 'TEXT', status: 'TEXT',
+        created_at: 'TEXT',
+    },
 };
 
 export function mirrorDdl(clientTable) {
