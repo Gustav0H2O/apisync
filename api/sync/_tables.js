@@ -149,6 +149,12 @@ export const CORE_TABLE_RULES = {
         businessKey: { cols: ['document_type', 'number'], notEmpty: 'number' },
         sealed: true,
     },
+    warehouses: {
+        businessKey: { cols: ['code'], notEmpty: 'code' },
+    },
+    transfers: {
+        businessKey: { cols: ['transfer_number'], notEmpty: 'transfer_number' },
+    },
     audit_logs: {
         appendOnly: true,
     },
