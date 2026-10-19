@@ -95,11 +95,30 @@ async function getAccessToken() {
 }
 
 /**
+ * FCM HTTP v1 solo admite URLs http(s) en los campos de imagen. Un valor
+ * inválido (p. ej. una ruta relativa) hace que FCM rechace el mensaje con 400
+ * y la notificación no se muestre en el dispositivo.
+ */
+function normalizeImageUrl(value) {
+    if (!value) return null;
+    const raw = String(value).trim();
+    if (!raw) return null;
+    try {
+        const parsed = new URL(raw);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+        return parsed.toString();
+    } catch (_) {
+        return null;
+    }
+}
+
+/**
  * Envía a una lista de tokens. Devuelve { sent, invalidTokens }.
  * - `notification`: {title, body} → el sistema la muestra aunque la app esté
  *    cerrada. Omitir para un mensaje SILENCIOSO de solo-datos (despierta la
  *    app para sincronizar sin mostrar nada).
  * - `data`: pares clave/valor (se fuerzan a String, requisito de FCM).
+ * - `image`: URL absoluta http(s) de la imagen grande (BigPicture).
  */
 export async function sendToTokens(tokens, { notification, data, priority = 'high', image = null, channelId = 'factuflow_system_alerts' } = {}) {
     const unique = [...new Set((tokens || []).filter(Boolean))];
@@ -123,6 +142,8 @@ export async function sendToTokens(tokens, { notification, data, priority = 'hig
     const dataStr = {};
     if (data) for (const k of Object.keys(data)) dataStr[k] = String(data[k]);
 
+    const imageUrl = normalizeImageUrl(image);
+
     const invalidTokens = [];
     let sent = 0;
 
@@ -133,7 +154,7 @@ export async function sendToTokens(tokens, { notification, data, priority = 'hig
                 message.notification = {
                     title: notification.title,
                     body: notification.body,
-                    ...(image ? { image } : {})
+                    ...(imageUrl ? { image: imageUrl } : {})
                 };
             }
             if (Object.keys(dataStr).length) message.data = dataStr;
@@ -148,7 +169,7 @@ export async function sendToTokens(tokens, { notification, data, priority = 'hig
                     color: '#1E88E5',
                     sound: 'default',
                     channelId: channelId || 'factuflow_system_alerts',
-                    ...(image ? { imageUrl: image } : {})
+                    ...(imageUrl ? { image: imageUrl } : {})
                 };
             }
 
@@ -157,7 +178,7 @@ export async function sendToTokens(tokens, { notification, data, priority = 'hig
                 notification: {
                     icon: '/assets/images/ic_notification.png',
                     badge: '/assets/images/ic_notification.png',
-                    ...(image ? { image } : {})
+                    ...(imageUrl ? { image: imageUrl } : {})
                 }
             };
 
