@@ -53,7 +53,7 @@ export default async function handler(req, res) {
             // equipo que renovó a una clave nueva sigue viendo el mismo feed.
             const [rows] = await connection.execute(
                 `SELECT
-                    COALESCE((SELECT seq FROM account_cursor WHERE account_email = ?), 0) AS seq,
+                    COALESCE((SELECT MAX(seq) FROM change_log WHERE account_email = ?), 0) AS seq,
                     COALESCE((SELECT MAX(id) FROM app_notifications
                               WHERE target_email IS NULL OR target_email = ?), 0) AS notif_seq,
                     (SELECT COUNT(*) FROM app_notifications

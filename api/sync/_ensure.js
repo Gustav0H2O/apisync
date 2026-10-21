@@ -44,9 +44,13 @@ export const TABLE_SCHEMAS = {
         wholesale_price: 'REAL', wholesale_quantity: 'REAL',
         is_on_sale: 'INTEGER', promo_price: 'REAL', promo_quantity: 'REAL',
         promo_start_date: 'TEXT', promo_end_date: 'TEXT',
-        promo_rules: 'TEXT', promo_clients: 'TEXT',
+        promo_rules: 'TEXT', promo_clients: 'TEXT', promo_sellers: 'TEXT',
         tax_type: 'TEXT', type: 'TEXT', is_active: 'INTEGER',
         purchase_price: 'REAL',
+        lot_number: 'TEXT', expiry_date: 'TEXT',
+        is_alcohol: 'INTEGER', alcohol_degree: 'REAL',
+        alcohol_type: 'TEXT', alcohol_content: 'REAL',
+        alcohol_presentation: 'TEXT',
     },
     invoices: {
         number: 'TEXT', client_uuid: 'TEXT', client_name: 'TEXT',
@@ -116,6 +120,10 @@ export const TABLE_SCHEMAS = {
         to_warehouse_id: 'INTEGER', date: 'TEXT', reason: 'TEXT',
         observations: 'TEXT', items_json: 'TEXT', status: 'TEXT',
         created_at: 'TEXT',
+    },
+    product_suppliers: {
+        product_uuid: 'TEXT', supplier_uuid: 'TEXT', supplier_name: 'TEXT',
+        last_cost: 'REAL', purchase_count: 'INTEGER', last_purchase_at: 'TEXT',
     },
 };
 

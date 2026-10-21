@@ -29,8 +29,13 @@ export const TABLE_SPECS = {
             'supplier_uuid', 'stock', 'sales', 'category', 'barcode',
             'wholesale_price', 'wholesale_quantity', 'is_on_sale',
             'promo_price', 'promo_quantity', 'promo_start_date', 'promo_end_date',
-            'promo_rules', 'promo_clients', 'tax_type', 'type', 'is_active',
+            'promo_rules', 'promo_clients', 'promo_sellers',
+            'tax_type', 'type', 'is_active',
             'purchase_price',
+            // v56: control de lotes/vencimiento y alcoholicos.
+            'lot_number', 'expiry_date', 'is_alcohol', 'alcohol_degree',
+            // v59: caracteristicas de bebidas alcoholicas (SENIAT).
+            'alcohol_type', 'alcohol_content', 'alcohol_presentation',
         ],
         // Identidad de negocio: mismo código creado offline en dos dispositivos
         // se fusiona sobre la fila canónica en vez de duplicarse.
@@ -129,6 +134,12 @@ export const TABLE_SPECS = {
         accountScoped: true,
         cols: ['transfer_number', 'from_warehouse_id', 'to_warehouse_id', 'date', 'reason', 'observations', 'items_json', 'status', 'created_at'],
     },
+    // v57: costo por proveedor (un producto puede comprarse a varios).
+    product_suppliers: {
+        remote: 'sync_product_suppliers',
+        accountScoped: true,
+        cols: ['product_uuid', 'supplier_uuid', 'supplier_name', 'last_cost', 'purchase_count', 'last_purchase_at'],
+    },
 };
 
 // Grafo de dependencias relacionales para resolver el orden de inserción dinámicamente
@@ -190,7 +201,8 @@ export function resolveTableOrder(incomingTables) {
 
 // Orden de aplicación estándar por defecto (padres antes que hijos).
 export const TABLE_ORDER = [
-    'clients', 'suppliers', 'categories', 'products', 'invoices',
+    'clients', 'suppliers', 'categories', 'products', 'product_suppliers',
+    'invoices',
     'invoice_items', 'stock_movements', 'audit_logs', 'expenses',
     'fiscal_transmissions', 'user_roles', 'taxes', 'device_role_assignments',
     'warehouses', 'transfers',

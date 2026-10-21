@@ -99,7 +99,7 @@ export default async function handler(req, res) {
     const { clients = [], invoices = [], profile = null, products = [], suppliers = [], categories = [], stock_movements = [], audit_logs = [] } = push;
     // v48: tablas que se escapaban del flujo legacy (el bootstrap/full-push no
     // podía repoblarlas y un dispositivo nuevo no las recibía en el snapshot).
-    const simpleTables = ['taxes', 'expenses', 'fiscal_transmissions', 'user_roles', 'warehouses', 'transfers'];
+    const simpleTables = ['taxes', 'expenses', 'fiscal_transmissions', 'user_roles', 'warehouses', 'transfers', 'product_suppliers'];
 
 
     let connection;
@@ -261,8 +261,8 @@ export default async function handler(req, res) {
         for (const item of products) {
             batchStatements.push({
                 sql: `INSERT INTO sync_products 
-                    (uuid, account_email, code, name, description, unit, sale_price, is_exempt, supplier_uuid, stock, sales, category, wholesale_price, wholesale_quantity, is_on_sale, promo_price, promo_quantity, promo_start_date, promo_end_date, barcode, tax_type, type, is_active, promo_rules, promo_clients, deleted_at, version, updated_at)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (uuid, account_email, code, name, description, unit, sale_price, is_exempt, supplier_uuid, stock, sales, category, wholesale_price, wholesale_quantity, is_on_sale, promo_price, promo_quantity, promo_start_date, promo_end_date, barcode, tax_type, type, is_active, promo_rules, promo_clients, promo_sellers, lot_number, expiry_date, is_alcohol, alcohol_degree, alcohol_type, alcohol_content, alcohol_presentation, deleted_at, version, updated_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                   ON CONFLICT(uuid) DO UPDATE SET
                     code               = CASE WHEN excluded.version >= sync_products.version THEN excluded.code ELSE sync_products.code END,
                     name               = CASE WHEN excluded.version >= sync_products.version THEN excluded.name ELSE sync_products.name END,
@@ -287,6 +287,14 @@ export default async function handler(req, res) {
                     is_active          = CASE WHEN excluded.version >= sync_products.version THEN excluded.is_active ELSE sync_products.is_active END,
                     promo_rules        = CASE WHEN excluded.version >= sync_products.version THEN excluded.promo_rules ELSE sync_products.promo_rules END,
                     promo_clients      = CASE WHEN excluded.version >= sync_products.version THEN excluded.promo_clients ELSE sync_products.promo_clients END,
+                    promo_sellers      = CASE WHEN excluded.version >= sync_products.version THEN excluded.promo_sellers ELSE sync_products.promo_sellers END,
+                    lot_number         = CASE WHEN excluded.version >= sync_products.version THEN excluded.lot_number ELSE sync_products.lot_number END,
+                    expiry_date        = CASE WHEN excluded.version >= sync_products.version THEN excluded.expiry_date ELSE sync_products.expiry_date END,
+                    is_alcohol         = CASE WHEN excluded.version >= sync_products.version THEN excluded.is_alcohol ELSE sync_products.is_alcohol END,
+                    alcohol_degree     = CASE WHEN excluded.version >= sync_products.version THEN excluded.alcohol_degree ELSE sync_products.alcohol_degree END,
+                    alcohol_type       = CASE WHEN excluded.version >= sync_products.version THEN excluded.alcohol_type ELSE sync_products.alcohol_type END,
+                    alcohol_content    = CASE WHEN excluded.version >= sync_products.version THEN excluded.alcohol_content ELSE sync_products.alcohol_content END,
+                    alcohol_presentation = CASE WHEN excluded.version >= sync_products.version THEN excluded.alcohol_presentation ELSE sync_products.alcohol_presentation END,
                     deleted_at         = CASE WHEN excluded.version >= sync_products.version THEN excluded.deleted_at ELSE sync_products.deleted_at END,
                     updated_at         = CASE WHEN excluded.version >= sync_products.version THEN excluded.updated_at ELSE sync_products.updated_at END,
                     version            = CASE WHEN excluded.version >= sync_products.version THEN excluded.version ELSE sync_products.version END`,
@@ -295,7 +303,9 @@ export default async function handler(req, res) {
                     item.is_exempt, item.supplier_uuid, item.stock, item.sales, item.category,
                     item.wholesale_price, item.wholesale_quantity, item.is_on_sale, item.promo_price,
                     item.promo_quantity, item.promo_start_date, item.promo_end_date, item.barcode,
-                    item.tax_type, item.type, item.is_active, item.promo_rules, item.promo_clients,
+                    item.tax_type, item.type, item.is_active, item.promo_rules, item.promo_clients, item.promo_sellers,
+                    item.lot_number, item.expiry_date, item.is_alcohol, item.alcohol_degree,
+                    item.alcohol_type, item.alcohol_content, item.alcohol_presentation,
                     item.deleted_at, item.version, item.updated_at
                 ])
             });
@@ -537,7 +547,7 @@ export default async function handler(req, res) {
             // Notificación instantánea en memoria para SSE / streaming activo
             try {
                 const [seqRows] = await connection.execute(
-                    'SELECT COALESCE((SELECT seq FROM account_cursor WHERE account_email = ?), 0) AS seq',
+                    'SELECT COALESCE((SELECT MAX(seq) FROM change_log WHERE account_email = ?), 0) AS seq',
                     [user.email]
                 );
                 syncBus.emit('change:' + String(user.email).trim().toLowerCase(), Number(seqRows[0]?.seq || 0));
@@ -685,7 +695,7 @@ export default async function handler(req, res) {
         const globalChecksum = parseInt(checksumResults[0]?.global_checksum || 0);
 
         const [seqRows] = await connection.execute(
-            `SELECT COALESCE((SELECT seq FROM account_cursor WHERE account_email = ?), 0) AS seq`,
+            `SELECT COALESCE((SELECT MAX(seq) FROM change_log WHERE account_email = ?), 0) AS seq`,
             [user.email]
         );
         const currentSeq = Number(seqRows[0]?.seq || 0);
@@ -708,6 +718,7 @@ export default async function handler(req, res) {
             user_roles: simplePulls.user_roles,
             warehouses: simplePulls.warehouses || [],
             transfers: simplePulls.transfers || [],
+            product_suppliers: simplePulls.product_suppliers || [],
             profile: profileResponse,
             profile_status: profileStatus,
             notifications: notifications,

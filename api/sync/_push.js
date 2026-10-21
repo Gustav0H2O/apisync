@@ -375,7 +375,7 @@ export default async function handler(req, res) {
         }
 
         const [seqRows] = await connection.execute(
-            'SELECT COALESCE((SELECT seq FROM account_cursor WHERE account_email = ?), 0) AS seq',
+            'SELECT COALESCE((SELECT MAX(seq) FROM change_log WHERE account_email = ?), 0) AS seq',
             [user.email]
         );
         const currentSeq = Number(seqRows[0]?.seq || 0);
@@ -486,10 +486,14 @@ function upsertStatement(spec, email, row, uuid, version, now, physicalCols = nu
 
     const conflictTarget = spec.conflictTarget || '(uuid)';
     const updatable = cols.filter(c => c !== 'uuid' && c !== 'account_email');
+    // REGLA DE CONFLICTO: gana la version MAYOR (igual que el push legacy).
+    // Antes se hacia `col = excluded.col` SIN COMPARAR: un dispositivo con
+    // datos viejos (o un tombstone de un borrado anterior) pisaba una
+    // restauracion valida y el elemento volvia a la papelera al instante.
     let sql = `INSERT INTO ${spec.remote} (${cols.join(', ')})
                VALUES (${cols.map(() => '?').join(', ')})
                ON CONFLICT ${conflictTarget} DO UPDATE SET
-               ${updatable.map(c => `${c} = excluded.${c}`).join(', ')}`;
+               ${updatable.map(c => `${c} = CASE WHEN excluded.version >= ${spec.remote}.version THEN excluded.${c} ELSE ${spec.remote}.${c} END`).join(', ')}`;
 
     // Cinturón de seguridad en SQL además de la decisión en JS: una factura
     // sellada solo se reescribe si el sello y el hash se preservan.

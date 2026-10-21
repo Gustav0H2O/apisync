@@ -35,7 +35,7 @@ export default async function handler(req, res) {
     try {
         const connection = getConnection();
         const [rows] = await connection.execute(
-            'SELECT COALESCE((SELECT seq FROM account_cursor WHERE account_email = ?), 0) AS seq',
+            'SELECT COALESCE((SELECT MAX(seq) FROM change_log WHERE account_email = ?), 0) AS seq',
             [user.email]
         );
         lastSeq = Number(rows[0]?.seq || 0);
@@ -66,7 +66,7 @@ export default async function handler(req, res) {
         try {
             const connection = getConnection();
             const [rows] = await connection.execute(
-                'SELECT COALESCE((SELECT seq FROM account_cursor WHERE account_email = ?), 0) AS seq',
+                'SELECT COALESCE((SELECT MAX(seq) FROM change_log WHERE account_email = ?), 0) AS seq',
                 [user.email]
             );
             const dbSeq = Number(rows[0]?.seq || 0);
