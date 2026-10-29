@@ -21,6 +21,7 @@ bd_nueva_backup.json
 licencias_generadas.txt
 
 .vercel
+.vercel.old_account/
 node_modules/
 .env
 .env.*
