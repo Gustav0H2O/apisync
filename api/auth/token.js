@@ -10,7 +10,19 @@ const DEFAULT_PAIR_COOLDOWN_DAYS = 2;
 
 // --- HELPERS ---
 
+// La política de licencia (máx. dispositivos / cooldown) se consultaba en
+// cada /pairing/devices (cada 30 s por caja) y en cada /pairing/count. Cache
+// por instancia de 60 s: un cambio de política tarda como máximo 1 min en
+// reflejarse, sin multiplicar consultas a Turso.
+const POLICY_CACHE_TTL_MS = 60 * 1000;
+const _policyCache = new Map();
+
 async function getLicensePolicy(licenseKey) {
+    const cacheKey = String(licenseKey || '').trim().toUpperCase();
+    const cached = _policyCache.get(cacheKey);
+    if (cached && (Date.now() - cached.at) < POLICY_CACHE_TTL_MS) {
+        return cached.value;
+    }
     try {
         const rows = await queryDB(
             `SELECT COALESCE(max_devices_allowed, ?) AS max_devices_allowed,
@@ -18,11 +30,14 @@ async function getLicensePolicy(licenseKey) {
              FROM licencias WHERE license_key = ? LIMIT 1`,
             [DEFAULT_MAX_DEVICES, DEFAULT_PAIR_COOLDOWN_DAYS, licenseKey]
         );
-        if (!rows.length) return { maxDevicesAllowed: DEFAULT_MAX_DEVICES, pairCooldownDays: DEFAULT_PAIR_COOLDOWN_DAYS };
-        return {
-            maxDevicesAllowed: Number(rows[0].max_devices_allowed ?? DEFAULT_MAX_DEVICES),
-            pairCooldownDays: Number(rows[0].pair_cooldown_days ?? DEFAULT_PAIR_COOLDOWN_DAYS),
-        };
+        const value = !rows.length
+            ? { maxDevicesAllowed: DEFAULT_MAX_DEVICES, pairCooldownDays: DEFAULT_PAIR_COOLDOWN_DAYS }
+            : {
+                maxDevicesAllowed: Number(rows[0].max_devices_allowed ?? DEFAULT_MAX_DEVICES),
+                pairCooldownDays: Number(rows[0].pair_cooldown_days ?? DEFAULT_PAIR_COOLDOWN_DAYS),
+            };
+        _policyCache.set(cacheKey, { at: Date.now(), value });
+        return value;
     } catch (e) { 
         console.warn('⚠️ [Policy Check] Error al obtener política, usando valores por defecto:', e.message);
         return { maxDevicesAllowed: DEFAULT_MAX_DEVICES, pairCooldownDays: DEFAULT_PAIR_COOLDOWN_DAYS }; 

@@ -182,11 +182,41 @@ export const INFRA_DDL = [
         start_date TEXT, end_date TEXT, repeat_interval INTEGER DEFAULT 0,
         route TEXT, action_data TEXT
     )`,
+    // Query del latido /sync/cursor: evita escanear app_notifications completa.
+    `CREATE INDEX IF NOT EXISTS idx_app_notifications_target
+        ON app_notifications (target_email, is_active)`,
+    // Query del latido /sync/cursor: lookup de contadores de perfil por correo.
+    `CREATE INDEX IF NOT EXISTS idx_clientes_email
+        ON clientes (email)`,
 ];
 
 // Cache en memoria de columnas por tabla remota para evitar consultas repetitivas
 const _tableColumnsCache = new Map();
 const CACHE_TTL_MS = 60 * 1000;
+
+// Cache de aprovisionamiento por instancia: ensureMirrorTables corría en CADA
+// push (CREATE + ALTER fallido + PRAGMA por tabla + INFRA_DDL). Medido: ~43 ms
+// de CPU por push de 5 tablas. Ahora se asegura una vez cada 2 min por tabla.
+const _ensuredAt = new Map();
+const ENSURE_TTL_MS = 2 * 60 * 1000;
+let _infraEnsuredAt = 0;
+
+// Si la fila trae una columna que el espejo físico aún no tiene, se fuerza el
+// ensure para no perder datos nuevos de una versión reciente del cliente.
+function _sampleHasUnknownColumn(table, sample) {
+    if (!sample || typeof sample !== 'object') return false;
+    const spec = TABLE_SPECS[table];
+    const remote = spec?.remote || `sync_${String(table).toLowerCase().trim()}`;
+    const cached = _tableColumnsCache.get(remote);
+    if (!cached || !cached.cols || !cached.cols.size) return true;
+    for (const key of Object.keys(sample)) {
+        const safeCol = key.toLowerCase().trim();
+        if (!/^[a-z][a-z0-9_]{1,40}$/.test(safeCol)) continue;
+        if (['uuid', 'account_email', 'account_key', 'version', 'updated_at', 'deleted_at'].includes(safeCol)) continue;
+        if (!cached.cols.has(safeCol)) return true;
+    }
+    return false;
+}
 
 export async function getTableColumns(connection, clientTable) {
     const safeTable = String(clientTable || '').toLowerCase().trim();
@@ -279,21 +309,40 @@ export async function autoMigrateColumns(connection, clientTable, sampleRow = nu
  */
 export async function ensureMirrorTables(connection, clientTables, changes = null) {
     const ensured = [];
+    const now = Date.now();
+    let infraDue = (now - _infraEnsuredAt) >= ENSURE_TTL_MS;
+
     for (const table of clientTables) {
         const ddl = mirrorDdl(table);
         if (!ddl) continue;
+
+        const sample = (changes && Array.isArray(changes[table]) && changes[table][0]) || null;
+        const lastEnsured = _ensuredAt.get(table) || 0;
+        const due = (now - lastEnsured) >= ENSURE_TTL_MS;
+        if (!due && !_sampleHasUnknownColumn(table, sample)) {
+            // Ya asegurada por esta instancia hace <2 min y sin columnas nuevas.
+            ensured.push(table);
+            continue;
+        }
+
         try {
             await connection.execute(ddl, []);
             ensured.push(table);
-            // v49: garantizar account_key en espejos viejos (email-only).
+            // v49: garantizar account_key SOLO si falta. Antes se lanzaba un
+            // ALTER en cada push que siempre fallaba con "duplicate column".
             try {
                 const spec = TABLE_SPECS[table];
                 const remote = spec?.remote || `sync_${table.toLowerCase().trim()}`;
                 if (spec?.accountScoped !== false) {
-                    await connection.execute(`ALTER TABLE ${remote} ADD COLUMN account_key TEXT`, []);
+                    const cols = await getTableColumns(connection, table);
+                    if (cols.size && !cols.has('account_key')) {
+                        await connection.execute(`ALTER TABLE ${remote} ADD COLUMN account_key TEXT`, []);
+                        cols.add('account_key');
+                        console.log(`✨ [Ensure] account_key agregada a ${remote}`);
+                    }
                 }
             } catch (_) {}
-            const sample = (changes && Array.isArray(changes[table]) && changes[table][0]) || null;
+
             await autoMigrateColumns(connection, table, sample);
 
             // Índice para tabla dinámica si no está en TABLE_SPECS
@@ -308,16 +357,21 @@ export async function ensureMirrorTables(connection, clientTables, changes = nul
                     // Ignore index creation race
                 }
             }
+            _ensuredAt.set(table, now);
         } catch (e) {
             console.warn(`⚠️ [Ensure] No se pudo asegurar ${table}: ${e.message}`);
         }
     }
-    for (const ddl of INFRA_DDL) {
-        try {
-            await connection.execute(ddl, []);
-        } catch (e) {
-            console.warn(`⚠️ [Ensure] Infra no asegurada: ${e.message}`);
+
+    if (infraDue) {
+        for (const ddl of INFRA_DDL) {
+            try {
+                await connection.execute(ddl, []);
+            } catch (e) {
+                console.warn(`⚠️ [Ensure] Infra no asegurada: ${e.message}`);
+            }
         }
+        _infraEnsuredAt = now;
     }
     return ensured;
 }

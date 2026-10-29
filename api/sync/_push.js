@@ -163,12 +163,27 @@ export default async function handler(req, res) {
                     }
                 }
                 const existing = existingByUuid.get(uuid) || null;
+                // Se calcula ANTES de heredar columnas: la rama de lápida sin
+                // fila remota lo usaba antes de su declaración (TDZ) y lanzaba
+                // un ReferenceError que tumbaba el push completo con 500.
+                const incomingVersion = toNumber(row.version, 1);
 
                 // Robustez contra restricciones NOT NULL de Turso:
                 if (existing) {
                     // Si la fila entrante es una lápida (tombstone) o carece de ciertas columnas,
                     // heredar los valores de la fila existente para que el INSERT / ON CONFLICT no falle.
                     for (const col of Object.keys(existing)) {
+                        if (col === 'deleted_at') {
+                            // `deleted_at: null` es un valor EXPLÍCITO: significa
+                            // "restaurado". Antes se trataba como ausente y se
+                            // heredaba la fecha de papelera, así que Turso volvía
+                            // a borrar la fila y el pull la devolvía a la
+                            // papelera ("sigue devolviéndose").
+                            if (row.deleted_at === undefined) {
+                                row.deleted_at = existing.deleted_at;
+                            }
+                            continue;
+                        }
                         if (row[col] === undefined || row[col] === null) {
                             row[col] = existing[col];
                         }
@@ -225,8 +240,6 @@ export default async function handler(req, res) {
                     rejected.push({ table, uuid, reason: 'forbidden' });
                     continue;
                 }
-
-                const incomingVersion = toNumber(row.version, 1);
 
                 // ── Inmutabilidad SENIAT ──
                 if (spec.sealed && existing && existing.sealed_at) {

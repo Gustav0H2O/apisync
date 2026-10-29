@@ -108,4 +108,40 @@ const [hack] = await db.execute('SELECT name FROM sync_clients WHERE uuid = ?', 
 assert(r.payload.rejected.length === 1 && r.payload.rejected[0].reason === 'forbidden', 'aislamiento por cuenta');
 assert(hack[0].name === 'NUEVO', 'fila ajena intacta');
 
+// 8. Restauración desde papelera: `deleted_at: null` es un valor explícito y
+//    debe persistir en Turso (antes se heredaba la fecha de papelera y el
+//    proveedor volvía a la papelera tras cada restore).
+r = res();
+await push(req({ body: { deviceId: DEVICE, changes: { suppliers: [{ uuid: 'sup-1', version: 1, name: 'Proveedor X' }] } } }), r);
+assert(r.statusCode === 200 && r.payload.applied[0]?.version === 1, 'supplier insertado v1');
+
+r = res();
+await push(req({ body: { deviceId: DEVICE, changes: { suppliers: [{ uuid: 'sup-1', version: 2, name: 'Proveedor X', deleted_at: '2026-02-01T00:00:00.000Z' }] } } }), r);
+assert(r.statusCode === 200 && r.payload.applied[0]?.version === 2, 'supplier en papelera v2');
+let [sup] = await db.execute('SELECT deleted_at FROM sync_suppliers WHERE uuid = ?', ['sup-1']);
+assert(sup[0].deleted_at !== null, 'papelera persistida en Turso');
+
+r = res();
+await push(req({ body: { deviceId: DEVICE, changes: { suppliers: [{ uuid: 'sup-1', version: 3, name: 'Proveedor X', deleted_at: null }] } } }), r);
+assert(r.statusCode === 200, `restore responde 200 (got ${r.statusCode})`);
+assert(r.payload.applied[0]?.version === 3, 'restore aplicado v3');
+[sup] = await db.execute('SELECT deleted_at FROM sync_suppliers WHERE uuid = ?', ['sup-1']);
+assert(sup[0].deleted_at === null, 'Turso conserva deleted_at NULL tras restaurar');
+
+r = res();
+await changes(req({ method: 'GET', query: { since: '0', limit: '500' } }), r);
+const pulledSup = (r.payload.changes.suppliers || []).find(x => x.uuid === 'sup-1');
+assert(pulledSup && pulledSup.deleted_at === null, 'el pull devuelve el proveedor restaurado');
+
+// 9. Lápida de una fila que nunca existió en Turso: debe responder 200 y no
+//    insertar un fantasma (antes lanzaba ReferenceError por TDZ y tumbaba el
+//    push completo con 500, bloqueando TODOS los cambios pendientes).
+const nowIso = new Date().toISOString();
+r = res();
+await push(req({ body: { deviceId: DEVICE, changes: { suppliers: [{ uuid: 'sup-ghost', deleted_at: nowIso, updated_at: nowIso, version: 999999999 }] } } }), r);
+assert(r.statusCode === 200, `lápida sin fila remota responde 200 (got ${r.statusCode} ${JSON.stringify(r.payload)?.slice(0, 160)})`);
+assert(r.payload.applied.some(a => a.uuid === 'sup-ghost'), 'lápida reconocida en applied');
+const [ghost] = await db.execute('SELECT COUNT(*) AS c FROM sync_suppliers WHERE uuid = ?', ['sup-ghost']);
+assert(Number(ghost[0].c) === 0, 'no se inserta un fantasma');
+
 console.log('\nE2E v47: TODO OK');

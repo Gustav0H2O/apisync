@@ -3,6 +3,22 @@ import { getConnection } from '../_db.js';
 import { verifyToken, isDeviceRevoked, requireJwtSecret, applyCors, parseExpirationDate } from '../_helpers.js';
 import { signLicensePayload } from './_sign.js';
 
+// Throttle de escrituras por instancia: /license/status se consulta de forma
+// periódica y escribía `devices.last_seen` + `detalles_saas.last_check` en
+// CADA llamada (8.640 escrituras/día por caja). 60 s es suficiente para el
+// diagnóstico de "equipo en línea" y reduce el coste de Turso/Vercel.
+const WRITE_THROTTLE_MS = 60 * 1000;
+const _lastSeenWrite = new Map();
+const _lastCheckWrite = new Map();
+
+function shouldWrite(map, key) {
+    const now = Date.now();
+    const last = map.get(key) || 0;
+    if (now - last < WRITE_THROTTLE_MS) return false;
+    map.set(key, now);
+    return true;
+}
+
 /**
  * GET /api/license/status  (auth JWT) — validación de licencia con payload
  * firmado para el modo offline (INFORME_SEGURIDAD_ENDPOINTS.md §3).
@@ -114,15 +130,17 @@ export default async function handler(req, res) {
         if (await isDeviceRevoked({ deviceId: user.deviceId, licenseKey: effectiveLicenseKey })) {
             status = 'revoked';
             // Marca de contacto (diagnóstico): el poll de licencia corre cada
-            // 10 s en todas las cajas, incluso sin sincronización. Tocar
+            // 60 s en todas las cajas, incluso sin sincronización. Tocar
             // `last_seen` en la fila ya revocada no cambia ninguna decisión de
             // seguridad y permite ver desde la BD que la caja revocada sí
             // está consultando y recibe el "revoked".
             try {
-                await connection.execute(
-                    `UPDATE devices SET last_seen = datetime('now') WHERE license_key = ? AND device_id = ?`,
-                    [effectiveLicenseKey, user.deviceId]
-                );
+                if (shouldWrite(_lastSeenWrite, `${effectiveLicenseKey}:${user.deviceId}`)) {
+                    await connection.execute(
+                        `UPDATE devices SET last_seen = datetime('now') WHERE license_key = ? AND device_id = ?`,
+                        [effectiveLicenseKey, user.deviceId]
+                    );
+                }
             } catch (_) { /* best-effort */ }
         }
 
@@ -136,10 +154,14 @@ export default async function handler(req, res) {
         }
 
         if (status === 'active' && tipo === 'saas') {
-            await connection.execute(
-                `UPDATE detalles_saas SET last_check = datetime('now') WHERE licencia_id = ?`,
-                [lic.lic_id]
-            );
+            try {
+                if (shouldWrite(_lastCheckWrite, String(lic.lic_id))) {
+                    await connection.execute(
+                        `UPDATE detalles_saas SET last_check = datetime('now') WHERE licencia_id = ?`,
+                        [lic.lic_id]
+                    );
+                }
+            } catch (_) { /* best-effort */ }
         }
 
         let newToken = null;

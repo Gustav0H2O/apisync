@@ -76,7 +76,10 @@ export default async function handler(req, res) {
         let state = await fetchCursorState();
 
         // Long-polling reactivo de ultra-baja latencia: despierta inmediatamente
-        // vía syncBus en memoria (0ms) o por sondeo de 200ms ante mutaciones de la cuenta.
+        // vía syncBus en memoria (0 ms) o por sondeo de 1 s ante mutaciones de
+        // la cuenta. Antes sondeaba cada 200 ms: 50 consultas por request de
+        // 10 s, lo que disparaba el Active CPU de Vercel. Con 1 s la latencia
+        // percibida sigue siendo <1 s y el CPU por request baja ~5x.
         if (since !== null && maxWaitMs > 0 && state.seq <= since) {
             const emailKey = String(user.email || '').trim().toLowerCase();
             let busTriggered = false;
@@ -89,7 +92,7 @@ export default async function handler(req, res) {
                         state = await fetchCursorState();
                         break;
                     }
-                    await new Promise(r => setTimeout(r, 200));
+                    await new Promise(r => setTimeout(r, 1000));
                     state = await fetchCursorState();
                     if (state.seq > since || busTriggered) {
                         break; // Cambio detectado en tiempo real
