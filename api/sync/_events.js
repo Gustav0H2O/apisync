@@ -58,7 +58,10 @@ export default async function handler(req, res) {
     syncBus.on('change:' + emailKey, onChange);
 
     // 3. Puente multi-instancia Serverless (Vercel):
-    // Verifica si el cursor avanzó en Turso por pushes recibidos en otros contenedores Lambda
+    // Verifica si el cursor avanzó en Turso por pushes recibidos en otros contenedores Lambda.
+    // Cadencia 10 s: con 1.2 s eran 3.000 consultas/hora por caja conectada y el
+    // mayor quemador de cuota (Turso + CPU). Los clientes nuevos ya no abren SSE
+    // y usan el poll del cursor; esto solo acota el coste de los builds viejos.
     let isChecking = false;
     const bridgeTimer = setInterval(async () => {
         if (isChecking) return;
@@ -78,7 +81,7 @@ export default async function handler(req, res) {
         } finally {
             isChecking = false;
         }
-    }, 1200);
+    }, 10000);
 
     // 4. Heartbeat cada 15 segundos para evitar que proxies o Vercel cierren la conexión
     const keepAliveTimer = setInterval(() => {
