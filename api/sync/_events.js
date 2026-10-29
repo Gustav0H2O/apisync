@@ -87,8 +87,25 @@ export default async function handler(req, res) {
         } catch (_) {}
     }, 15000);
 
-    // 5. Limpieza de memoria al desconectar el cliente
+    // 5. Rotación elegante ANTES del límite de 300 s del runtime serverless
+    // (plan Hobby): Vercel abortaba la función y registraba "Vercel Runtime
+    // Timeout Error: Task timed out after 300 seconds" en cada conexión. El
+    // cliente SSE reconecta solo con backoff (1 s tras el primer corte), así
+    // que el stream se rota de forma transparente y el dashboard queda limpio.
+    const SSE_MAX_LIFE_MS = 240 * 1000;
+    const lifetimeTimer = setTimeout(() => {
+        try {
+            res.write(`data: ${JSON.stringify({ type: 'rotate' })}\n\n`);
+            res.end();
+        } catch (_) {}
+        clearInterval(bridgeTimer);
+        clearInterval(keepAliveTimer);
+        syncBus.removeListener('change:' + emailKey, onChange);
+    }, SSE_MAX_LIFE_MS);
+
+    // 6. Limpieza de memoria al desconectar el cliente
     req.on('close', () => {
+        clearTimeout(lifetimeTimer);
         clearInterval(bridgeTimer);
         clearInterval(keepAliveTimer);
         syncBus.removeListener('change:' + emailKey, onChange);
