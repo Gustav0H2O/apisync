@@ -138,7 +138,6 @@ export default async function handler(req, res) {
                         source: 'bcv_cron_6am'
                     },
                     priority: 'high',
-                    image: 'https://apisync3.vercel.app/splash_logo_general.png',
                     channelId: 'factuflow_system_alerts'
                 });
                 pushed = result.sent;

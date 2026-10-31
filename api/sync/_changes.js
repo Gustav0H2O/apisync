@@ -37,16 +37,51 @@ export default async function handler(req, res) {
         // NO crea entrada en `change_log` ni sube `version`, de modo que el
         // cliente jamás se enteraría por el feed: viajan en CADA respuesta.
         async function profileCounters() {
-            const [rows] = await connection.execute(
-                `SELECT COALESCE(profile_change_limit, 3) AS profile_change_limit,
-                        COALESCE(profile_change_count, 0) AS profile_change_count
-                 FROM clientes WHERE email = ? LIMIT 1`,
-                [user.email]
-            );
-            const r = rows[0] || {};
+            const licenseKey = String(user.licenseKey || '').trim().toUpperCase();
+            let clientRow = null;
+            if (licenseKey) {
+                try {
+                    const [byLicense] = await connection.execute(
+                        `SELECT 
+                            c.business_change_limit, c.business_change_count,
+                            c.account_change_limit, c.account_change_count,
+                            c.profile_change_limit, c.profile_change_count
+                         FROM licencias l
+                         JOIN clientes c ON l.cliente_id = c.id
+                         WHERE l.license_key = ? LIMIT 1`,
+                        [licenseKey]
+                    );
+                    if (byLicense && byLicense.length > 0) clientRow = byLicense[0];
+                } catch (_) {}
+            }
+            if (!clientRow) {
+                try {
+                    const [byEmail] = await connection.execute(
+                        `SELECT 
+                            business_change_limit, business_change_count,
+                            account_change_limit, account_change_count,
+                            profile_change_limit, profile_change_count
+                         FROM clientes 
+                         WHERE LOWER(email) = LOWER(?) 
+                         ORDER BY id DESC LIMIT 1`,
+                        [user.email]
+                    );
+                    if (byEmail && byEmail.length > 0) clientRow = byEmail[0];
+                } catch (_) {}
+            }
+
+            const bLimit = Number(clientRow?.business_change_limit ?? clientRow?.profile_change_limit ?? 3);
+            const bCount = Number(clientRow?.business_change_count ?? clientRow?.profile_change_count ?? 0);
+            const aLimit = Number(clientRow?.account_change_limit ?? 3);
+            const aCount = Number(clientRow?.account_change_count ?? 0);
+
             return {
-                profile_change_limit: Number(r.profile_change_limit ?? 3),
-                profile_change_count: Number(r.profile_change_count ?? 0),
+                business_change_limit: bLimit,
+                business_change_count: bCount,
+                account_change_limit: aLimit,
+                account_change_count: aCount,
+                profile_change_limit: bLimit,
+                profile_change_count: bCount,
             };
         }
 

@@ -9,7 +9,12 @@ export default async function handler(req, res) {
     const { query, params, isActivation } = req.body || {};
     
     const authHeader = req.headers.authorization;
-    const isMaster = authHeader === `Bearer ${process.env.JWT_SECRET}`;
+    const isMaster = (process.env.JWT_SECRET && authHeader === `Bearer ${process.env.JWT_SECRET}`) ||
+                     (process.env.API_PROXY_SECRET && (
+                         authHeader === `Bearer ${process.env.API_PROXY_SECRET}` ||
+                         (req.headers['x-proxy-secret'] === process.env.API_PROXY_SECRET) ||
+                         (req.body && req.body.secret === process.env.API_PROXY_SECRET)
+                     ));
 
     // Si NO es una consulta de activación (como SELECT licencias), validamos el token
     if (!isActivation && !isMaster) {

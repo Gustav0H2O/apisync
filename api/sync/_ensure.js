@@ -188,6 +188,10 @@ export const INFRA_DDL = [
     // Query del latido /sync/cursor: lookup de contadores de perfil por correo.
     `CREATE INDEX IF NOT EXISTS idx_clientes_email
         ON clientes (email)`,
+    `ALTER TABLE clientes ADD COLUMN business_change_limit INTEGER DEFAULT 3`,
+    `ALTER TABLE clientes ADD COLUMN business_change_count INTEGER DEFAULT 0`,
+    `ALTER TABLE clientes ADD COLUMN account_change_limit INTEGER DEFAULT 3`,
+    `ALTER TABLE clientes ADD COLUMN account_change_count INTEGER DEFAULT 0`,
 ];
 
 // Cache en memoria de columnas por tabla remota para evitar consultas repetitivas

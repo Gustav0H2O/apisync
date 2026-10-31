@@ -17,11 +17,21 @@
 
 import { physicalColumns } from './_registry.js';
 
-const IDENTIDAD = ['business_name', 'slogan', 'rif', 'address', 'user_name', 'user_phone'];
+export const BUSINESS_IDENTITY = ['business_name', 'slogan', 'rif', 'address'];
+export const ACCOUNT_IDENTITY = ['user_name', 'user_phone'];
+export const IDENTIDAD = ['business_name', 'slogan', 'rif', 'address', 'user_name', 'user_phone'];
+
+export function businessIdentityChanged(current = {}, incoming = {}) {
+    return BUSINESS_IDENTITY.some((k) => String(current[k] ?? '').trim() !== String(incoming[k] ?? '').trim());
+}
+
+export function accountIdentityChanged(current = {}, incoming = {}) {
+    return ACCOUNT_IDENTITY.some((k) => String(current[k] ?? '').trim() !== String(incoming[k] ?? '').trim());
+}
 
 /** Campos de identidad que cambiaron (para el límite de cambios de perfil). */
 export function identityChanged(current = {}, incoming = {}) {
-    return IDENTIDAD.some((k) => String(current[k] ?? '') !== String(incoming[k] ?? ''));
+    return IDENTIDAD.some((k) => String(current[k] ?? '').trim() !== String(incoming[k] ?? '').trim());
 }
 
 /**
@@ -134,9 +144,17 @@ export async function buildProfileUpdate({
         args.push(incomingVersion);
     }
 
+    if (cols.has('business_change_count') && businessChangeCount !== undefined) {
+        set.push('business_change_count = ?');
+        args.push(businessChangeCount);
+    }
+    if (cols.has('account_change_count') && accountChangeCount !== undefined) {
+        set.push('account_change_count = ?');
+        args.push(accountChangeCount);
+    }
     if (cols.has('profile_change_count')) {
         set.push('profile_change_count = ?');
-        args.push(profileChangeCount);
+        args.push(businessChangeCount !== undefined ? businessChangeCount : profileChangeCount);
     }
 
     // 4) Configuración en JSON: lo que un cliente viejo no conoce igual queda
@@ -157,9 +175,16 @@ export async function buildProfileUpdate({
 
     if (!set.length) return null;
 
+    if (clientId) {
+        const args2 = [...args, clientId, incomingVersion];
+        return {
+            sql: `UPDATE clientes SET ${set.join(', ')} WHERE id = ? AND version ${versionOp} ?`,
+            args: args2.map((v) => (v === undefined ? null : v)),
+        };
+    }
     const args2 = [...args, email, incomingVersion];
     return {
-        sql: `UPDATE clientes SET ${set.join(', ')} WHERE email = ? AND version ${versionOp} ?`,
+        sql: `UPDATE clientes SET ${set.join(', ')} WHERE LOWER(email) = LOWER(?) AND version ${versionOp} ?`,
         args: args2.map((v) => (v === undefined ? null : v)),
     };
 }

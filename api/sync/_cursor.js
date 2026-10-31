@@ -49,27 +49,65 @@ export default async function handler(req, res) {
         const connection = getConnection();
 
         async function fetchCursorState() {
-            // El cursor es de la CUENTA (correo), no de la licencia: así un
-            // equipo que renovó a una clave nueva sigue viendo el mismo feed.
             const [rows] = await connection.execute(
                 `SELECT
                     COALESCE((SELECT MAX(seq) FROM change_log WHERE account_email = ?), 0) AS seq,
                     COALESCE((SELECT MAX(id) FROM app_notifications
                               WHERE target_email IS NULL OR target_email = ?), 0) AS notif_seq,
                     (SELECT COUNT(*) FROM app_notifications
-                      WHERE is_active = 1 AND (target_email IS NULL OR target_email = ?)) AS notif_active,
-                    COALESCE((SELECT profile_change_limit FROM clientes WHERE email = ? LIMIT 1), 3) AS profile_change_limit,
-                    COALESCE((SELECT profile_change_count FROM clientes WHERE email = ? LIMIT 1), 0) AS profile_change_count`,
-                [user.email, user.email, user.email, user.email, user.email]
+                      WHERE is_active = 1 AND (target_email IS NULL OR target_email = ?)) AS notif_active`,
+                [user.email, user.email, user.email]
             );
 
             const row = rows[0] || {};
+            const licenseKey = String(user.licenseKey || '').trim().toUpperCase();
+            let clientRow = null;
+            if (licenseKey) {
+                try {
+                    const [byLicense] = await connection.execute(
+                        `SELECT 
+                            c.business_change_limit, c.business_change_count,
+                            c.account_change_limit, c.account_change_count,
+                            c.profile_change_limit, c.profile_change_count
+                         FROM licencias l
+                         JOIN clientes c ON l.cliente_id = c.id
+                         WHERE l.license_key = ? LIMIT 1`,
+                        [licenseKey]
+                    );
+                    if (byLicense && byLicense.length > 0) clientRow = byLicense[0];
+                } catch (_) {}
+            }
+            if (!clientRow) {
+                try {
+                    const [byEmail] = await connection.execute(
+                        `SELECT 
+                            business_change_limit, business_change_count,
+                            account_change_limit, account_change_count,
+                            profile_change_limit, profile_change_count
+                         FROM clientes 
+                         WHERE LOWER(email) = LOWER(?) 
+                         ORDER BY id DESC LIMIT 1`,
+                        [user.email]
+                    );
+                    if (byEmail && byEmail.length > 0) clientRow = byEmail[0];
+                } catch (_) {}
+            }
+
+            const bLimit = Number(clientRow?.business_change_limit ?? clientRow?.profile_change_limit ?? 3);
+            const bCount = Number(clientRow?.business_change_count ?? clientRow?.profile_change_count ?? 0);
+            const aLimit = Number(clientRow?.account_change_limit ?? 3);
+            const aCount = Number(clientRow?.account_change_count ?? 0);
+
             return {
                 seq: Number(row.seq || 0),
                 notif_seq: Number(row.notif_seq || 0),
                 notif_active: Number(row.notif_active || 0),
-                profile_change_limit: Number(row.profile_change_limit ?? 3),
-                profile_change_count: Number(row.profile_change_count ?? 0),
+                business_change_limit: bLimit,
+                business_change_count: bCount,
+                account_change_limit: aLimit,
+                account_change_count: aCount,
+                profile_change_limit: bLimit,
+                profile_change_count: bCount,
             };
         }
 

@@ -524,64 +524,103 @@ function upsertStatement(spec, email, row, uuid, version, now, physicalCols = nu
 }
 
 async function buildProfileStatements(connection, email, profile, statements, accountKey = null) {
-    const [rows] = await connection.execute(
-        `SELECT business_name, slogan, rif, address, user_name, user_phone,
-                COALESCE(profile_change_count, 0) AS profile_change_count,
-                COALESCE(profile_change_limit, 3) AS profile_change_limit,
-                COALESCE(version, 1) AS version
-         FROM clientes WHERE email = ? LIMIT 1`,
-        [email]
-    );
-    if (!rows.length) return { status: 'not_found' };
+    let current = null;
+    const licenseKey = accountKey ? String(accountKey).trim().toUpperCase() : null;
+    if (licenseKey) {
+        try {
+            const [byLic] = await connection.execute(
+                `SELECT c.*,
+                        COALESCE(c.business_change_limit, c.profile_change_limit, 3) AS business_change_limit,
+                        COALESCE(c.business_change_count, c.profile_change_count, 0) AS business_change_count,
+                        COALESCE(c.account_change_limit, 3) AS account_change_limit,
+                        COALESCE(c.account_change_count, 0) AS account_change_count,
+                        COALESCE(c.profile_change_limit, 3) AS profile_change_limit,
+                        COALESCE(c.profile_change_count, 0) AS profile_change_count,
+                        COALESCE(c.version, 1) AS version
+                 FROM licencias l
+                 JOIN clientes c ON l.cliente_id = c.id
+                 WHERE l.license_key = ? LIMIT 1`,
+                [licenseKey]
+            );
+            if (byLic && byLic.length > 0) current = byLic[0];
+        } catch (_) {}
+    }
+    if (!current) {
+        try {
+            const [byEmail] = await connection.execute(
+                `SELECT c.*,
+                        COALESCE(c.business_change_limit, c.profile_change_limit, 3) AS business_change_limit,
+                        COALESCE(c.business_change_count, c.profile_change_count, 0) AS business_change_count,
+                        COALESCE(c.account_change_limit, 3) AS account_change_limit,
+                        COALESCE(c.account_change_count, 0) AS account_change_count,
+                        COALESCE(c.profile_change_limit, 3) AS profile_change_limit,
+                        COALESCE(c.profile_change_count, 0) AS profile_change_count,
+                        COALESCE(c.version, 1) AS version
+                 FROM clientes c WHERE LOWER(c.email) = LOWER(?) ORDER BY c.id DESC LIMIT 1`,
+                [email]
+            );
+            if (byEmail && byEmail.length > 0) current = byEmail[0];
+        } catch (_) {}
+    }
+    if (!current) return { status: 'not_found' };
 
-    const current = rows[0];
     const incomingVersion = toNumber(profile.version, 1);
-    const count = toNumber(current.profile_change_count, 0);
-    const limit = toNumber(current.profile_change_limit, 3);
+    const bLimit = toNumber(current.business_change_limit, 3);
+    const bCount = toNumber(current.business_change_count, 0);
+    const aLimit = toNumber(current.account_change_limit, 3);
+    const aCount = toNumber(current.account_change_count, 0);
 
     if (incomingVersion <= toNumber(current.version, 1)) {
-        // El servidor ya tiene esta versión (o una más nueva): no se escribe
-        // nada, pero el límite y el contador vigentes viajan igual en la
-        // respuesta para que la caja refleje lo que hay en la nube.
-        return { status: 'unchanged', limit, count };
+        return {
+            status: 'unchanged',
+            business_change_limit: bLimit,
+            business_change_count: bCount,
+            account_change_limit: aLimit,
+            account_change_count: aCount,
+            limit: bLimit,
+            count: bCount,
+        };
     }
 
-    const identityChanged =
-        (current.business_name || '') !== (profile.business_name || '') ||
-        (current.slogan || '') !== (profile.slogan || '') ||
-        (current.rif || '') !== (profile.rif || '') ||
-        (current.address || '') !== (profile.address || '') ||
-        (current.user_name || '') !== (profile.user_name || '') ||
-        (current.user_phone || '') !== (profile.user_phone || '');
+    const businessChanged =
+        (current.business_name || '').trim() !== (profile.business_name || '').trim() ||
+        (current.slogan || '').trim() !== (profile.slogan || '').trim() ||
+        (current.rif || '').trim() !== (profile.rif || '').trim() ||
+        (current.address || '').trim() !== (profile.address || '').trim();
 
-    // El límite protege SOLO la identidad del negocio (nombre, eslogan, RIF,
-    // dirección y datos de la persona). El resto de la configuración es
-    // operativa y se sincroniza SIEMPRE: antes, un perfil en su límite
-    // rechazaba el perfil completo y congelaba monedas, colores, catálogo,
-    // tasas e impresión para todas las cajas, en silencio.
-    const identityBlocked = identityChanged && count >= limit;
+    const accountChanged =
+        (current.user_name || '').trim() !== (profile.user_name || '').trim() ||
+        (current.user_phone || '').trim() !== (profile.user_phone || '').trim();
 
-    // ── Perfil: construcción DINÁMICA del UPDATE ─────────────────────────────
-    // La lógica vive en `_profile.js`, COMPARTIDA con el push legacy. Estaba
-    // duplicada y con ~40 columnas escritas a mano; esa duplicación es la que
-    // rompió la edición de roles al limpiar `clientes`: la copia legacy siguió
-    // pidiendo columnas inexistentes y tumbó el push atómico completo.
+    const businessBlocked = businessChanged && bCount >= bLimit;
+    const accountBlocked = accountChanged && aCount >= aLimit;
+
+    const newBusinessCount = businessBlocked ? bCount : (businessChanged ? bCount + 1 : bCount);
+    const newAccountCount = accountBlocked ? aCount : (accountChanged ? aCount + 1 : aCount);
+
     const profileUpdate = await buildProfileUpdate({
         connection,
         email,
+        clientId: current.id,
         profile,
         incomingVersion,
-        profileChangeCount: identityBlocked ? count : (identityChanged ? count + 1 : count),
+        businessChangeCount: newBusinessCount,
+        accountChangeCount: newAccountCount,
+        profileChangeCount: newBusinessCount,
         versionOp: '<',
-        skipIdentity: identityBlocked,
+        skipBusiness: businessBlocked,
+        skipAccount: accountBlocked,
     });
     if (profileUpdate) statements.push(profileUpdate);
-    // Se registra en el feed SIEMPRE que algo se escribió: con la identidad
-    // bloqueada la configuración igual cambió y las otras cajas deben verla.
     statements.push(...changeLogStatements(email, 'profile', email, 'upsert', accountKey));
+
     return {
-        status: identityBlocked ? 'change_limit' : 'applied',
-        limit,
-        count: identityBlocked ? count : (identityChanged ? count + 1 : count),
+        status: (businessBlocked || accountBlocked) ? 'change_limit' : 'applied',
+        business_change_limit: bLimit,
+        business_change_count: newBusinessCount,
+        account_change_limit: aLimit,
+        account_change_count: newAccountCount,
+        limit: bLimit,
+        count: newBusinessCount,
     };
 }
