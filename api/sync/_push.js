@@ -431,6 +431,18 @@ export default async function handler(req, res) {
             if (profileResult.count !== undefined) {
                 response.profile_change_count = profileResult.count;
             }
+            if (profileResult.business_change_limit !== undefined) {
+                response.business_change_limit = profileResult.business_change_limit;
+            }
+            if (profileResult.business_change_count !== undefined) {
+                response.business_change_count = profileResult.business_change_count;
+            }
+            if (profileResult.account_change_limit !== undefined) {
+                response.account_change_limit = profileResult.account_change_limit;
+            }
+            if (profileResult.account_change_count !== undefined) {
+                response.account_change_count = profileResult.account_change_count;
+            }
             // Identidad rechazada por el límite: la caja debe volver al perfil
             // autoritativo de la nube. Su versión local ya quedó alineada con
             // la del servidor, así que ni el pull (misma versión) ni el push

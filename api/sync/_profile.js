@@ -81,6 +81,11 @@ export async function buildProfileUpdate({
     profile,
     incomingVersion,
     profileChangeCount,
+    clientId,
+    businessChangeCount,
+    accountChangeCount,
+    skipBusiness = false,
+    skipAccount = false,
     // El legacy reenvía el perfil en cada ciclo con la misma versión, así que
     // usa '<=' (hay que reescribir). El v47 solo avanza versión: '<'.
     versionOp = '<',
@@ -100,6 +105,8 @@ export async function buildProfileUpdate({
     const RESERVED = new Set([
         'id', 'email', 'version', 'created_at', 'updated_at', 'config_data',
         'profile_change_count', 'profile_change_limit', 'clear_catalog_logo',
+        'business_change_count', 'business_change_limit',
+        'account_change_count', 'account_change_limit',
         'catalog_logo_path',
     ]);
 
@@ -110,6 +117,8 @@ export async function buildProfileUpdate({
     for (const [key, value] of Object.entries(profile)) {
         if (RESERVED.has(key)) continue;
         if (skipIdentity && IDENTIDAD.includes(key)) continue; // límite agotado
+        if (skipBusiness && BUSINESS_IDENTITY.includes(key)) continue;
+        if (skipAccount && ACCOUNT_IDENTITY.includes(key)) continue;
         if (!cols.has(key)) continue; // la columna ya no existe: se ignora
         set.push(`${key} = ?`);
         args.push(value === undefined ? null : value);

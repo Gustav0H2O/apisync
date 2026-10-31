@@ -37,7 +37,7 @@ export default async function handler(req, res) {
         // NO crea entrada en `change_log` ni sube `version`, de modo que el
         // cliente jamás se enteraría por el feed: viajan en CADA respuesta.
         async function profileCounters() {
-            const licenseKey = String(user.licenseKey || '').trim().toUpperCase();
+            const licenseKey = String(user.licenseKey || user.effectiveKey || user.license_key || '').trim().toUpperCase();
             let clientRow = null;
             if (licenseKey) {
                 try {
@@ -48,7 +48,7 @@ export default async function handler(req, res) {
                             c.profile_change_limit, c.profile_change_count
                          FROM licencias l
                          JOIN clientes c ON l.cliente_id = c.id
-                         WHERE l.license_key = ? LIMIT 1`,
+                         WHERE UPPER(TRIM(l.license_key)) = ? LIMIT 1`,
                         [licenseKey]
                     );
                     if (byLicense && byLicense.length > 0) clientRow = byLicense[0];
