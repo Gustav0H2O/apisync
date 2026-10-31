@@ -1,6 +1,25 @@
 import { getConnection } from './_db.js';
 import { verifyToken, isDeviceRevoked, applyCors } from './_helpers.js';
 
+let _clientesColumnsEnsured = false;
+async function ensureClientesColumns(connection) {
+    if (_clientesColumnsEnsured) return;
+    const ddl = [
+        'ALTER TABLE clientes ADD COLUMN business_change_limit INTEGER DEFAULT 3',
+        'ALTER TABLE clientes ADD COLUMN business_change_count INTEGER DEFAULT 0',
+        'ALTER TABLE clientes ADD COLUMN account_change_limit INTEGER DEFAULT 3',
+        'ALTER TABLE clientes ADD COLUMN account_change_count INTEGER DEFAULT 0',
+    ];
+    for (const sql of ddl) {
+        try {
+            await connection.execute(sql, []);
+        } catch (_) {
+            // Ignorar pacíficamente si la columna ya existe
+        }
+    }
+    _clientesColumnsEnsured = true;
+}
+
 export default async function handler(req, res) {
     if (applyCors(req, res)) return;
     console.log(`🚀 [API] ${req.method} request received`);
@@ -32,14 +51,15 @@ export default async function handler(req, res) {
         }
     } else if (isActivation && !isMaster) {
         // SEGURIDAD: Solo permitimos consultas específicas de activación si NO es maestro
-        const upperQuery = query.toUpperCase();
+        const upperQuery = (query || '').toUpperCase();
         const isSelect = upperQuery.includes('SELECT');
         const isUpdate = upperQuery.includes('UPDATE');
+        const isAlter = upperQuery.includes('ALTER');
         const isAllowedTable = upperQuery.includes('LICENCIAS') || 
                               upperQuery.includes('CLIENTES') || 
                               upperQuery.includes('DETALLES_SAAS');
         
-        const isAllowedActivationQuery = (isSelect || isUpdate) && isAllowedTable &&
+        const isAllowedActivationQuery = (isSelect || isUpdate || isAlter) && isAllowedTable &&
                                         !upperQuery.includes('DELETE') && 
                                         !upperQuery.includes('DROP');
         
@@ -49,10 +69,15 @@ export default async function handler(req, res) {
     }
     // Si isMaster es true, se salta todas las validaciones y ejecuta la query
 
-
     let connection;
     try {
         connection = await getConnection();
+
+        // Asegurar columnas de límites en clientes si la consulta la referencia
+        if (query && query.toUpperCase().includes('CLIENTES')) {
+            await ensureClientesColumns(connection);
+        }
+
         const safeParams = (params || []).map(p => p === undefined ? null : p);
         const [rows] = await connection.execute(query, safeParams);
         await connection.destroy(); // IMPORTANTÍSIMO AQUÍ
