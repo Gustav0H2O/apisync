@@ -55,6 +55,13 @@ export default async function handler(req, res) {
         connection = getConnection();
 
         // 1. Persistir para el motor local-first con todos sus atributos en Turso
+        if (actionData === 'bcv_daily_rate') {
+            await connection.execute(
+                `DELETE FROM app_notifications 
+                 WHERE action_data = 'bcv_daily_rate' 
+                    OR title LIKE '%Tasa Oficial BCV%'`
+            );
+        }
         await connection.execute(
             `INSERT INTO app_notifications (
                 target_email, condition_key, condition_op, condition_val,

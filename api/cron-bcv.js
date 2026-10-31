@@ -7,7 +7,8 @@ import { applyCors } from './_cors.js';
  * 
  * Automatización diaria de Tasa BCV (programada a las 6:00 AM VET / 10:00 UTC).
  * Consulta la tasa oficial más reciente y la envía en tiempo real vía Firebase Push
- * a todos los dispositivos registrados activos, además de persistirla en app_notifications.
+ * a todos los dispositivos registrados activos, además de persistirla/actualizarla
+ * en app_notifications manteniendo SIEMPRE una única notificación activa para BCV.
  */
 export default async function handler(req, res) {
     if (applyCors(req, res)) return;
@@ -15,11 +16,13 @@ export default async function handler(req, res) {
     let rateValue = null;
     let rateDate = new Date().toLocaleDateString('es-VE');
 
-    // 1. Obtener la tasa oficial del BCV desde el servicio centralizado
+    // 1. Obtener la tasa oficial del BCV desde el servicio centralizado con x-api-key
+    const bcvApiKey = process.env.API_KEY_BCV || 'N3!5@4kPcA4FdQ5B!uQ!c@ZjxmUvFKRf';
     try {
         const bcvResp = await fetch('https://api-bcv-sua.vercel.app/v1/usd', {
             headers: {
                 'Accept': 'application/json',
+                'x-api-key': bcvApiKey,
                 'User-Agent': 'FactuFlow-Automations/1.0',
             }
         });
@@ -31,6 +34,8 @@ export default async function handler(req, res) {
                 rateValue = parseFloat(record.valor).toFixed(2);
                 if (record.fecha) rateDate = record.fecha;
             }
+        } else {
+            console.warn('[cron-bcv] api-bcv-sua returned status:', bcvResp.status);
         }
     } catch (e) {
         console.warn('[cron-bcv] Error al obtener tasa de api-bcv-sua:', e.message);
@@ -61,16 +66,58 @@ export default async function handler(req, res) {
     try {
         connection = getConnection();
 
-        // 2. Persistir en app_notifications para que los clientes la vean también al abrir la app
-        await connection.execute(
-            `INSERT INTO app_notifications (
-                title, message, type, is_active, show_once,
-                repeat_interval, route
-            ) VALUES (?, ?, 'info', 1, 0, 1440, '/config')`,
-            [title, message]
+        // 2. Persistir en app_notifications: Mantener UNA SOLA notificación activa del BCV
+        // Buscamos si ya existe alguna notificación previa del BCV para actualizarla en vez de duplicar
+        const [existingBcv] = await connection.execute(
+            `SELECT id FROM app_notifications 
+             WHERE action_data = 'bcv_daily_rate' 
+                OR title LIKE '%Tasa Oficial BCV%' 
+                OR title LIKE '%Actualización de Tasa%'
+             ORDER BY id DESC`
         );
 
-        // 3. Enviar Push FCM a todos los dispositivos
+        let activeBcvId;
+        if (existingBcv && existingBcv.length > 0) {
+            activeBcvId = existingBcv[0].id;
+            // Actualizar la última existente con el nuevo precio y fecha
+            await connection.execute(
+                `UPDATE app_notifications 
+                 SET title = ?, 
+                     message = ?, 
+                     type = 'info', 
+                     is_active = 1, 
+                     show_once = 0, 
+                     repeat_interval = 1440, 
+                     route = '/config', 
+                     action_data = 'bcv_daily_rate',
+                     start_date = CURRENT_TIMESTAMP,
+                     end_date = NULL
+                 WHERE id = ?`,
+                [title, message, activeBcvId]
+            );
+
+            // Eliminar duplicados anteriores si existen para mantener la lista limpia (solo 1 presente)
+            if (existingBcv.length > 1) {
+                const idsToDelete = existingBcv.slice(1).map(r => r.id);
+                const placeholders = idsToDelete.map(() => '?').join(',');
+                await connection.execute(
+                    `DELETE FROM app_notifications WHERE id IN (${placeholders})`,
+                    idsToDelete
+                );
+            }
+        } else {
+            // No existe ninguna, crear la primera y única
+            const [insertRes] = await connection.execute(
+                `INSERT INTO app_notifications (
+                    title, message, type, is_active, show_once,
+                    repeat_interval, route, action_data
+                ) VALUES (?, ?, 'info', 1, 0, 1440, '/config', 'bcv_daily_rate')`,
+                [title, message]
+            );
+            activeBcvId = insertRes?.insertId;
+        }
+
+        // 3. Enviar Push FCM a todos los dispositivos registrados activos
         let pushed = 0;
         let matched = 0;
         if (fcmConfigured()) {
@@ -87,9 +134,11 @@ export default async function handler(req, res) {
                         type: 'info',
                         route: '/config',
                         rate: rateValue || '',
+                        action_data: 'bcv_daily_rate',
                         source: 'bcv_cron_6am'
                     },
                     priority: 'high',
+                    image: 'https://apisync3.vercel.app/splash_logo_general.png',
                     channelId: 'factuflow_system_alerts'
                 });
                 pushed = result.sent;
@@ -102,6 +151,7 @@ export default async function handler(req, res) {
             rate: rateValue,
             title,
             message,
+            notificationId: activeBcvId,
             pushed,
             matchedDevices: matched,
             executedAt: new Date().toISOString()

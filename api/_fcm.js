@@ -142,7 +142,8 @@ export async function sendToTokens(tokens, { notification, data, priority = 'hig
     const dataStr = {};
     if (data) for (const k of Object.keys(data)) dataStr[k] = String(data[k]);
 
-    const imageUrl = normalizeImageUrl(image);
+    const DEFAULT_NOTIFICATION_IMAGE = 'https://apisync3.vercel.app/splash_logo_general.png';
+    const imageUrl = normalizeImageUrl(image || DEFAULT_NOTIFICATION_IMAGE);
 
     const invalidTokens = [];
     let sent = 0;
