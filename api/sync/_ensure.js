@@ -51,6 +51,9 @@ export const TABLE_SCHEMAS = {
         is_alcohol: 'INTEGER', alcohol_degree: 'REAL',
         alcohol_type: 'TEXT', alcohol_content: 'REAL',
         alcohol_presentation: 'TEXT',
+        barcode_box: 'TEXT', items_per_box: 'REAL',
+        unit_sale_price: 'REAL', unit_purchase_price: 'REAL',
+        stock_loose_units: 'REAL',
     },
     invoices: {
         number: 'TEXT', client_uuid: 'TEXT', client_name: 'TEXT',
@@ -77,7 +80,7 @@ export const TABLE_SCHEMAS = {
         invoice_uuid: 'TEXT', product_uuid: 'TEXT', code: 'TEXT',
         description: 'TEXT', quantity: 'REAL', unit_price: 'REAL',
         total_price: 'REAL', is_exempt: 'INTEGER', discount: 'REAL',
-        tax_type: 'TEXT',
+        tax_type: 'TEXT', unit: 'TEXT',
     },
     stock_movements: {
         product_uuid: 'TEXT', quantity: 'REAL', type: 'TEXT',

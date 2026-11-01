@@ -36,6 +36,8 @@ export const TABLE_SPECS = {
             'lot_number', 'expiry_date', 'is_alcohol', 'alcohol_degree',
             // v59: caracteristicas de bebidas alcoholicas (SENIAT).
             'alcohol_type', 'alcohol_content', 'alcohol_presentation',
+            // v61: ventas por caja y unidades sueltas.
+            'barcode_box', 'items_per_box', 'unit_sale_price', 'unit_purchase_price', 'stock_loose_units',
         ],
         // Identidad de negocio: mismo código creado offline en dos dispositivos
         // se fusiona sobre la fila canónica en vez de duplicarse.
@@ -70,6 +72,7 @@ export const TABLE_SPECS = {
         cols: [
             'invoice_uuid', 'product_uuid', 'code', 'description', 'quantity',
             'unit_price', 'total_price', 'is_exempt', 'discount', 'tax_type',
+            'unit',
         ],
     },
     stock_movements: {
