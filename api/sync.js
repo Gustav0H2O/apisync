@@ -261,14 +261,15 @@ export default async function handler(req, res) {
         for (const item of products) {
             batchStatements.push({
                 sql: `INSERT INTO sync_products 
-                    (uuid, account_email, code, name, description, unit, sale_price, is_exempt, supplier_uuid, stock, sales, category, wholesale_price, wholesale_quantity, is_on_sale, promo_price, promo_quantity, promo_start_date, promo_end_date, barcode, tax_type, type, is_active, promo_rules, promo_clients, promo_sellers, lot_number, expiry_date, is_alcohol, alcohol_degree, alcohol_type, alcohol_content, alcohol_presentation, barcode_box, items_per_box, unit_sale_price, unit_purchase_price, stock_loose_units, deleted_at, version, updated_at)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (uuid, account_email, code, name, description, unit, sale_price, purchase_price, is_exempt, supplier_uuid, stock, sales, category, wholesale_price, wholesale_quantity, is_on_sale, promo_price, promo_quantity, promo_start_date, promo_end_date, barcode, tax_type, type, is_active, promo_rules, promo_clients, promo_sellers, lot_number, expiry_date, is_alcohol, alcohol_degree, alcohol_type, alcohol_content, alcohol_presentation, barcode_box, items_per_box, unit_sale_price, unit_purchase_price, stock_loose_units, deleted_at, version, updated_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                   ON CONFLICT(uuid) DO UPDATE SET
                     code               = CASE WHEN excluded.version >= sync_products.version THEN excluded.code ELSE sync_products.code END,
                     name               = CASE WHEN excluded.version >= sync_products.version THEN excluded.name ELSE sync_products.name END,
                     description        = CASE WHEN excluded.version >= sync_products.version THEN excluded.description ELSE sync_products.description END,
                     unit               = CASE WHEN excluded.version >= sync_products.version THEN excluded.unit ELSE sync_products.unit END,
                     sale_price         = CASE WHEN excluded.version >= sync_products.version THEN excluded.sale_price ELSE sync_products.sale_price END,
+                    purchase_price     = CASE WHEN excluded.version >= sync_products.version THEN excluded.purchase_price ELSE sync_products.purchase_price END,
                     is_exempt          = CASE WHEN excluded.version >= sync_products.version THEN excluded.is_exempt ELSE sync_products.is_exempt END,
                     supplier_uuid      = CASE WHEN excluded.version >= sync_products.version THEN excluded.supplier_uuid ELSE sync_products.supplier_uuid END,
                     stock              = CASE WHEN excluded.version >= sync_products.version THEN excluded.stock ELSE sync_products.stock END,
@@ -304,7 +305,7 @@ export default async function handler(req, res) {
                     updated_at         = CASE WHEN excluded.version >= sync_products.version THEN excluded.updated_at ELSE sync_products.updated_at END,
                     version            = CASE WHEN excluded.version >= sync_products.version THEN excluded.version ELSE sync_products.version END`,
                 args: mapP([
-                    item.uuid, user.email, item.code, item.name, item.description, item.unit, item.sale_price,
+                    item.uuid, user.email, item.code, item.name, item.description, item.unit, item.sale_price, item.purchase_price,
                     item.is_exempt, item.supplier_uuid, item.stock, item.sales, item.category,
                     item.wholesale_price, item.wholesale_quantity, item.is_on_sale, item.promo_price,
                     item.promo_quantity, item.promo_start_date, item.promo_end_date, item.barcode,
