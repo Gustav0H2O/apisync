@@ -7,7 +7,7 @@ import {
 } from './_tables.js';
 import { ensureMirrorTables, getTableColumns } from './_ensure.js';
 import { resolveSpec, physicalColumns, writableColumns } from './_registry.js';
-import { buildProfileUpdate, mergeProfileConfig } from './_profile.js';
+import { buildProfileUpdate, mergeProfileConfig, BUSINESS_IDENTITY, ACCOUNT_IDENTITY } from './_profile.js';
 import { sendToLicense } from '../_fcm.js';
 import { syncBus } from './_bus.js';
 
