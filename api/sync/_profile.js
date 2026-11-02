@@ -119,6 +119,7 @@ export async function buildProfileUpdate({
         if (skipIdentity && IDENTIDAD.includes(key)) continue; // límite agotado
         if (skipBusiness && BUSINESS_IDENTITY.includes(key)) continue;
         if (skipAccount && ACCOUNT_IDENTITY.includes(key)) continue;
+        if (IDENTIDAD.includes(key) && (value === null || value === undefined || String(value).trim() === '')) continue;
         if (!cols.has(key)) continue; // la columna ya no existe: se ignora
         set.push(`${key} = ?`);
         args.push(value === undefined ? null : value);

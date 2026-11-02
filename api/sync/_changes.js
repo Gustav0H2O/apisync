@@ -191,9 +191,14 @@ export default async function handler(req, res) {
 
         if (profileChanged) {
             const [profileRows] = await connection.execute(
-                `SELECT *, COALESCE(profile_change_limit, 3) AS profile_change_limit,
-                         COALESCE(profile_change_count, 0) AS profile_change_count
-                 FROM clientes WHERE email = ? LIMIT 1`,
+                `SELECT c.*,
+                        COALESCE(c.business_change_limit, c.profile_change_limit, 3) AS business_change_limit,
+                        COALESCE(c.business_change_count, c.profile_change_count, 0) AS business_change_count,
+                        COALESCE(c.account_change_limit, 3) AS account_change_limit,
+                        COALESCE(c.account_change_count, 0) AS account_change_count,
+                        COALESCE(c.profile_change_limit, 3) AS profile_change_limit,
+                        COALESCE(c.profile_change_count, 0) AS profile_change_count
+                 FROM clientes c WHERE LOWER(email) = LOWER(?) ORDER BY id DESC LIMIT 1`,
                 [user.email]
             );
             // Mezcla del JSON + logo en base64: función compartida con el pull

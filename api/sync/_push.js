@@ -383,7 +383,7 @@ export default async function handler(req, res) {
         }
 
         // ─── Batch atómico: upserts + change_log + cursor ───────────────────
-        if (statements.length > 1) {
+        if (statements.length > 0) {
             await connection.batch(statements);
         }
 
@@ -450,9 +450,14 @@ export default async function handler(req, res) {
             if (profileResult.status === 'change_limit') {
                 try {
                     const [pr] = await connection.execute(
-                        `SELECT *, COALESCE(profile_change_limit, 3) AS profile_change_limit,
-                                COALESCE(profile_change_count, 0) AS profile_change_count
-                         FROM clientes WHERE email = ? LIMIT 1`,
+                        `SELECT c.*,
+                                COALESCE(c.business_change_limit, c.profile_change_limit, 3) AS business_change_limit,
+                                COALESCE(c.business_change_count, c.profile_change_count, 0) AS business_change_count,
+                                COALESCE(c.account_change_limit, 3) AS account_change_limit,
+                                COALESCE(c.account_change_count, 0) AS account_change_count,
+                                COALESCE(c.profile_change_limit, 3) AS profile_change_limit,
+                                COALESCE(c.profile_change_count, 0) AS profile_change_count
+                         FROM clientes c WHERE LOWER(email) = LOWER(?) ORDER BY id DESC LIMIT 1`,
                         [user.email]
                     );
                     const authProfile = mergeProfileConfig(pr[0] || null);
@@ -594,15 +599,19 @@ async function buildProfileStatements(connection, email, profile, statements, ac
         };
     }
 
-    const businessChanged =
-        (current.business_name || '').trim() !== (profile.business_name || '').trim() ||
-        (current.slogan || '').trim() !== (profile.slogan || '').trim() ||
-        (current.rif || '').trim() !== (profile.rif || '').trim() ||
-        (current.address || '').trim() !== (profile.address || '').trim();
+    const businessChanged = BUSINESS_IDENTITY.some((k) => {
+        if (profile[k] === undefined) return false;
+        const incoming = String(profile[k] || '').trim();
+        const currentVal = String(current[k] || '').trim();
+        return incoming !== currentVal;
+    });
 
-    const accountChanged =
-        (current.user_name || '').trim() !== (profile.user_name || '').trim() ||
-        (current.user_phone || '').trim() !== (profile.user_phone || '').trim();
+    const accountChanged = ACCOUNT_IDENTITY.some((k) => {
+        if (profile[k] === undefined) return false;
+        const incoming = String(profile[k] || '').trim();
+        const currentVal = String(current[k] || '').trim();
+        return incoming !== currentVal;
+    });
 
     const businessBlocked = businessChanged && bCount >= bLimit;
     const accountBlocked = accountChanged && aCount >= aLimit;

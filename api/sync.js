@@ -132,8 +132,15 @@ export default async function handler(req, res) {
         if (profile) {
             // 1. Obtener perfil actual para comparar
             const [rows] = await connection.execute(
-                `SELECT business_name, slogan, rif, address, user_name, user_phone, profile_change_count, profile_change_limit, COALESCE(version, 1) AS version
-                 FROM clientes WHERE email = ?`,
+                `SELECT c.*,
+                        COALESCE(c.business_change_limit, c.profile_change_limit, 3) AS business_change_limit,
+                        COALESCE(c.business_change_count, c.profile_change_count, 0) AS business_change_count,
+                        COALESCE(c.account_change_limit, 3) AS account_change_limit,
+                        COALESCE(c.account_change_count, 0) AS account_change_count,
+                        COALESCE(c.profile_change_limit, 3) AS profile_change_limit,
+                        COALESCE(c.profile_change_count, 0) AS profile_change_count,
+                        COALESCE(c.version, 1) AS version
+                 FROM clientes c WHERE LOWER(c.email) = LOWER(?) ORDER BY c.id DESC LIMIT 1`,
                 [user.email]
             );
 
@@ -149,14 +156,9 @@ export default async function handler(req, res) {
                     ? toNumber(currentProfile.profile_change_limit, 3) : 3;
                 currentVersion = toNumber(currentProfile.version, 1);
 
-                if (
-                    (currentProfile.business_name || '') !== (profile.business_name || '') ||
-                    (currentProfile.slogan || '') !== (profile.slogan || '') ||
-                    (currentProfile.rif || '') !== (profile.rif || '') ||
-                    (currentProfile.address || '') !== (profile.address || '') ||
-                    (currentProfile.user_name || '') !== (profile.user_name || '') ||
-                    (currentProfile.user_phone || '') !== (profile.user_phone || '')
-                ) {
+                const hasBusinessChange = ['business_name', 'slogan', 'rif', 'address'].some(k => profile[k] !== undefined && String(currentProfile[k] || '').trim() !== String(profile[k] || '').trim());
+                const hasAccountChange = ['user_name', 'user_phone'].some(k => profile[k] !== undefined && String(currentProfile[k] || '').trim() !== String(profile[k] || '').trim());
+                if (hasBusinessChange || hasAccountChange) {
                     isProfileChange = true;
                 }
             } else {
