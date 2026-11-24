@@ -28,3 +28,4 @@ node_modules/
 firebase-service-account.json
 *.db
 .env*.local
+.env*

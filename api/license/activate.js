@@ -74,9 +74,34 @@ export default async function handler(req, res) {
             });
         }
 
-        const expDate = parseExpirationDate(lic.fecha_vencimiento);
+        let expDate = parseExpirationDate(lic.fecha_vencimiento);
         if (tipo === 'saas') {
-            if (!expDate || expDate < new Date()) {
+            if (!usado) {
+                // Licencia nueva que nunca ha sido activada:
+                // Si no tiene fecha de vencimiento configurada o si la fecha base expiró antes de entregarse,
+                // su período de vigencia comienza a partir del momento de activación (30 días por defecto).
+                if (!expDate || expDate < new Date()) {
+                    const base = new Date();
+                    base.setDate(base.getDate() + 30);
+                    expDate = base;
+                    const expSql = expDate.toISOString().slice(0, 19).replace('T', ' ');
+                    const [dsRows] = await connection.execute(
+                        `SELECT id FROM detalles_saas WHERE licencia_id = ? LIMIT 1`,
+                        [lic.lic_id]
+                    );
+                    if (dsRows.length) {
+                        await connection.execute(
+                            `UPDATE detalles_saas SET fecha_vencimiento = ?, last_check = datetime('now') WHERE licencia_id = ?`,
+                            [expSql, lic.lic_id]
+                        );
+                    } else {
+                        await connection.execute(
+                            `INSERT INTO detalles_saas (licencia_id, fecha_vencimiento, last_check) VALUES (?, ?, datetime('now'))`,
+                            [lic.lic_id, expSql]
+                        );
+                    }
+                }
+            } else if (!expDate || expDate < new Date()) {
                 return res.status(403).json({
                     error: 'expired',
                     message: 'Esta licencia está vencida. Adquiere una nueva clave o renueva tu suscripción.'
