@@ -54,7 +54,7 @@ export const TABLE_SCHEMAS = {
         barcode_box: 'TEXT', items_per_box: 'REAL',
         unit_sale_price: 'REAL', unit_purchase_price: 'REAL',
         stock_loose_units: 'REAL',
-        supplier_list_price: 'REAL', purchase_bcv_rate: 'REAL', purchase_usdt_rate: 'REAL',
+        supplier_list_price: 'REAL', supplier_discount_percent: 'REAL', purchase_bcv_rate: 'REAL', purchase_usdt_rate: 'REAL',
     },
     invoices: {
         number: 'TEXT', client_uuid: 'TEXT', client_name: 'TEXT',

@@ -39,7 +39,7 @@ export const TABLE_SPECS = {
             // v61: ventas por caja y unidades sueltas.
             'barcode_box', 'items_per_box', 'unit_sale_price', 'unit_purchase_price', 'stock_loose_units',
             // v65: calculadora de precios y tasas proveedor.
-            'supplier_list_price', 'purchase_bcv_rate', 'purchase_usdt_rate',
+            'supplier_list_price', 'supplier_discount_percent', 'purchase_bcv_rate', 'purchase_usdt_rate',
         ],
         // Identidad de negocio: mismo código creado offline en dos dispositivos
         // se fusiona sobre la fila canónica en vez de duplicarse.
