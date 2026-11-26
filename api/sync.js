@@ -263,8 +263,8 @@ export default async function handler(req, res) {
         for (const item of products) {
             batchStatements.push({
                 sql: `INSERT INTO sync_products 
-                    (uuid, account_email, code, name, description, unit, sale_price, purchase_price, is_exempt, supplier_uuid, stock, sales, category, wholesale_price, wholesale_quantity, is_on_sale, promo_price, promo_quantity, promo_start_date, promo_end_date, barcode, tax_type, type, is_active, promo_rules, promo_clients, promo_sellers, lot_number, expiry_date, is_alcohol, alcohol_degree, alcohol_type, alcohol_content, alcohol_presentation, barcode_box, items_per_box, unit_sale_price, unit_purchase_price, stock_loose_units, deleted_at, version, updated_at)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (uuid, account_email, code, name, description, unit, sale_price, purchase_price, is_exempt, supplier_uuid, stock, sales, category, wholesale_price, wholesale_quantity, is_on_sale, promo_price, promo_quantity, promo_start_date, promo_end_date, barcode, tax_type, type, is_active, promo_rules, promo_clients, promo_sellers, lot_number, expiry_date, is_alcohol, alcohol_degree, alcohol_type, alcohol_content, alcohol_presentation, barcode_box, items_per_box, unit_sale_price, unit_purchase_price, stock_loose_units, supplier_list_price, purchase_bcv_rate, purchase_usdt_rate, deleted_at, version, updated_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                   ON CONFLICT(uuid) DO UPDATE SET
                     code               = CASE WHEN excluded.version >= sync_products.version THEN excluded.code ELSE sync_products.code END,
                     name               = CASE WHEN excluded.version >= sync_products.version THEN excluded.name ELSE sync_products.name END,
@@ -303,6 +303,9 @@ export default async function handler(req, res) {
                     unit_sale_price    = CASE WHEN excluded.version >= sync_products.version THEN excluded.unit_sale_price ELSE sync_products.unit_sale_price END,
                     unit_purchase_price = CASE WHEN excluded.version >= sync_products.version THEN excluded.unit_purchase_price ELSE sync_products.unit_purchase_price END,
                     stock_loose_units  = CASE WHEN excluded.version >= sync_products.version THEN excluded.stock_loose_units ELSE sync_products.stock_loose_units END,
+                    supplier_list_price = CASE WHEN excluded.version >= sync_products.version THEN excluded.supplier_list_price ELSE sync_products.supplier_list_price END,
+                    purchase_bcv_rate   = CASE WHEN excluded.version >= sync_products.version THEN excluded.purchase_bcv_rate ELSE sync_products.purchase_bcv_rate END,
+                    purchase_usdt_rate  = CASE WHEN excluded.version >= sync_products.version THEN excluded.purchase_usdt_rate ELSE sync_products.purchase_usdt_rate END,
                     deleted_at         = CASE WHEN excluded.version >= sync_products.version THEN excluded.deleted_at ELSE sync_products.deleted_at END,
                     updated_at         = CASE WHEN excluded.version >= sync_products.version THEN excluded.updated_at ELSE sync_products.updated_at END,
                     version            = CASE WHEN excluded.version >= sync_products.version THEN excluded.version ELSE sync_products.version END`,
@@ -315,6 +318,7 @@ export default async function handler(req, res) {
                     item.lot_number, item.expiry_date, item.is_alcohol, item.alcohol_degree,
                     item.alcohol_type, item.alcohol_content, item.alcohol_presentation,
                     item.barcode_box, item.items_per_box, item.unit_sale_price, item.unit_purchase_price, item.stock_loose_units,
+                    item.supplier_list_price, item.purchase_bcv_rate, item.purchase_usdt_rate,
                     item.deleted_at, item.version, item.updated_at
                 ])
             });
