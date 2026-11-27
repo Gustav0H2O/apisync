@@ -55,6 +55,7 @@ export const TABLE_SCHEMAS = {
         unit_sale_price: 'REAL', unit_purchase_price: 'REAL',
         stock_loose_units: 'REAL',
         supplier_list_price: 'REAL', supplier_discount_percent: 'REAL', purchase_bcv_rate: 'REAL', purchase_usdt_rate: 'REAL',
+        wholesale_unit_price: 'REAL', wholesale_unit_quantity: 'REAL', min_sale_quantity: 'REAL', min_sale_unit_quantity: 'REAL', has_blister: 'INTEGER', units_per_blister: 'REAL',
     },
     invoices: {
         number: 'TEXT', client_uuid: 'TEXT', client_name: 'TEXT',
@@ -75,7 +76,7 @@ export const TABLE_SCHEMAS = {
         tax_base_general: 'REAL', tax_base_reduced: 'REAL',
         tax_base_additional: 'REAL', tax_base_exempt: 'REAL',
         applied_retention_iva: 'REAL', applied_retention_islr: 'REAL',
-        emission_source: 'TEXT',
+        emission_source: 'TEXT', is_paid: 'INTEGER',
     },
     invoice_items: {
         invoice_uuid: 'TEXT', product_uuid: 'TEXT', code: 'TEXT',

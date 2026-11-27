@@ -40,6 +40,7 @@ export const TABLE_SPECS = {
             'barcode_box', 'items_per_box', 'unit_sale_price', 'unit_purchase_price', 'stock_loose_units',
             // v65: calculadora de precios y tasas proveedor.
             'supplier_list_price', 'supplier_discount_percent', 'purchase_bcv_rate', 'purchase_usdt_rate',
+            'wholesale_unit_price', 'wholesale_unit_quantity', 'min_sale_quantity', 'min_sale_unit_quantity', 'has_blister', 'units_per_blister',
         ],
         // Identidad de negocio: mismo código creado offline en dos dispositivos
         // se fusiona sobre la fila canónica en vez de duplicarse.
@@ -62,7 +63,7 @@ export const TABLE_SPECS = {
             'tax_base_general', 'tax_base_reduced', 'tax_base_additional',
             'tax_base_exempt', 'applied_retention_iva', 'applied_retention_islr',
             'emission_source',
-            'client_trade_name', 'is_client_special_taxpayer',
+            'client_trade_name', 'is_client_special_taxpayer', 'is_paid',
         ],
         businessKey: { cols: ['document_type', 'number'], notEmpty: 'number' },
         sealed: true,
