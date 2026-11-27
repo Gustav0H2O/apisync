@@ -30,3 +30,5 @@ firebase-service-account.json
 .env*.local
 .env*
 .vercel-backup
+.vercel-backuptigre
+.vercel-backupantigrapro
